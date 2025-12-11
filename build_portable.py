@@ -50,6 +50,115 @@ BUILD_DIR = "UnixAutoEdit_Portable"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
+def find_system_python():
+    """Find system Python installation with tkinter."""
+    possible_paths = [
+        # Common installation paths
+        r"C:\Python311",
+        r"C:\Python310",
+        r"C:\Python39",
+        r"C:\Python312",
+        # User installation paths
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python311"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python310"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python312"),
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python\Python39"),
+        # Program Files
+        r"C:\Program Files\Python311",
+        r"C:\Program Files\Python310",
+        # Current Python
+        os.path.dirname(sys.executable),
+    ]
+
+    for path in possible_paths:
+        if not path or not os.path.isdir(path):
+            continue
+        # Check if this Python has tkinter
+        tkinter_path = os.path.join(path, "Lib", "tkinter")
+        if os.path.isdir(tkinter_path):
+            return path
+
+    return None
+
+
+def copy_tkinter(build_dir):
+    """Copy tkinter from system Python to embedded Python."""
+    log("Looking for system Python with tkinter...", "INFO")
+
+    src_python = find_system_python()
+
+    if not src_python:
+        log("Could not find system Python with tkinter!", "ERROR")
+        log("Please install Python from python.org with tkinter included", "ERROR")
+        return False
+
+    log(f"Found system Python: {src_python}", "SUCCESS")
+
+    python_dir = os.path.join(build_dir, "python")
+
+    # Files/folders to copy
+    copy_items = [
+        # tkinter module
+        (os.path.join(src_python, "Lib", "tkinter"), os.path.join(python_dir, "Lib", "tkinter")),
+        # _tkinter.pyd (the C extension)
+        (os.path.join(src_python, "DLLs", "_tkinter.pyd"), os.path.join(python_dir, "_tkinter.pyd")),
+        # Tcl/Tk DLLs
+        (os.path.join(src_python, "DLLs", "tcl86t.dll"), os.path.join(python_dir, "tcl86t.dll")),
+        (os.path.join(src_python, "DLLs", "tk86t.dll"), os.path.join(python_dir, "tk86t.dll")),
+        # Tcl/Tk libraries
+        (os.path.join(src_python, "tcl"), os.path.join(python_dir, "tcl")),
+    ]
+
+    # Alternative DLL locations (some Python versions)
+    alt_dll_paths = [
+        os.path.join(src_python, "DLLs"),
+        src_python,
+        os.path.join(src_python, "Library", "bin"),
+    ]
+
+    success_count = 0
+
+    for src, dst in copy_items:
+        if os.path.exists(src):
+            try:
+                if os.path.isdir(src):
+                    if os.path.exists(dst):
+                        shutil.rmtree(dst)
+                    shutil.copytree(src, dst)
+                else:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+                log(f"Copied: {os.path.basename(src)}", "SUCCESS")
+                success_count += 1
+            except Exception as e:
+                log(f"Failed to copy {src}: {e}", "WARNING")
+        else:
+            # Try alternative locations for DLLs
+            basename = os.path.basename(src)
+            found = False
+            for alt_path in alt_dll_paths:
+                alt_src = os.path.join(alt_path, basename)
+                if os.path.exists(alt_src):
+                    try:
+                        shutil.copy2(alt_src, dst)
+                        log(f"Copied (alt): {basename}", "SUCCESS")
+                        success_count += 1
+                        found = True
+                        break
+                    except:
+                        pass
+            if not found:
+                log(f"Not found: {basename}", "WARNING")
+
+    # Verify tkinter works
+    if success_count >= 3:  # At minimum need tkinter folder, _tkinter.pyd, and tcl folder
+        log("Tkinter files copied successfully", "SUCCESS")
+        return True
+    else:
+        log("Some tkinter files could not be copied", "WARNING")
+        return True  # Continue anyway
+
+
 def log(msg, level="INFO"):
     """Print log message with formatting."""
     colors = {
@@ -710,6 +819,12 @@ def main():
     if not setup_python_embedded(build_dir):
         log("Failed to setup Python", "ERROR")
         return 1
+    print()
+
+    # Step 2.5: Copy tkinter from system Python
+    log("Step 2.5: Copying tkinter from system Python...", "INFO")
+    if not copy_tkinter(build_dir):
+        log("Tkinter copy failed - GUI may not work", "WARNING")
     print()
 
     # Step 3: Install dependencies
