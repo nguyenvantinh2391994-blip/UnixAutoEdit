@@ -163,6 +163,136 @@ def setup_python_embedded(build_dir):
     return True
 
 
+def setup_tkinter(build_dir):
+    """Copy tkinter from system Python to embedded Python.
+
+    Python Embedded does not include tkinter by default.
+    This function copies tkinter files from the system Python installation.
+    """
+    python_dir = os.path.join(build_dir, "python")
+
+    # Get system Python paths
+    import sys as system_sys
+    system_python = system_sys.executable
+    system_python_dir = os.path.dirname(system_python)
+
+    log(f"System Python: {system_python}")
+    log("Setting up tkinter for embedded Python...")
+
+    # Files/folders to copy
+    copied = []
+    errors = []
+
+    # 1. Copy _tkinter.pyd from DLLs
+    dlls_src = os.path.join(system_python_dir, "DLLs")
+    dlls_dst = os.path.join(python_dir, "DLLs")
+    os.makedirs(dlls_dst, exist_ok=True)
+
+    tkinter_pyd = "_tkinter.pyd"
+    if os.path.exists(os.path.join(dlls_src, tkinter_pyd)):
+        try:
+            shutil.copy2(os.path.join(dlls_src, tkinter_pyd), os.path.join(dlls_dst, tkinter_pyd))
+            copied.append(tkinter_pyd)
+        except Exception as e:
+            errors.append(f"_tkinter.pyd: {e}")
+    else:
+        # Try in python_dir directly (some installations)
+        alt_src = os.path.join(system_python_dir, tkinter_pyd)
+        if os.path.exists(alt_src):
+            try:
+                shutil.copy2(alt_src, os.path.join(python_dir, tkinter_pyd))
+                copied.append(tkinter_pyd)
+            except Exception as e:
+                errors.append(f"_tkinter.pyd: {e}")
+        else:
+            errors.append("_tkinter.pyd not found")
+
+    # 2. Copy tcl/tk DLLs (tcl86t.dll, tk86t.dll, etc.)
+    tcl_dlls = ["tcl86t.dll", "tk86t.dll", "tcl86.dll", "tk86.dll"]
+    for dll in tcl_dlls:
+        # Check multiple locations
+        for src_dir in [system_python_dir, dlls_src]:
+            src_path = os.path.join(src_dir, dll)
+            if os.path.exists(src_path):
+                try:
+                    shutil.copy2(src_path, os.path.join(python_dir, dll))
+                    copied.append(dll)
+                except Exception as e:
+                    errors.append(f"{dll}: {e}")
+                break
+
+    # 3. Copy tcl and tk library folders
+    lib_src = os.path.join(system_python_dir, "Lib")
+    lib_dst = os.path.join(python_dir, "Lib")
+    os.makedirs(lib_dst, exist_ok=True)
+
+    # Copy tkinter package
+    tkinter_pkg_src = os.path.join(lib_src, "tkinter")
+    tkinter_pkg_dst = os.path.join(lib_dst, "tkinter")
+    if os.path.exists(tkinter_pkg_src):
+        try:
+            if os.path.exists(tkinter_pkg_dst):
+                shutil.rmtree(tkinter_pkg_dst)
+            shutil.copytree(tkinter_pkg_src, tkinter_pkg_dst)
+            copied.append("tkinter/")
+        except Exception as e:
+            errors.append(f"tkinter package: {e}")
+    else:
+        errors.append("tkinter package not found")
+
+    # 4. Copy tcl/tk data folders (tcl8.6, tk8.6)
+    tcl_lib = os.path.join(system_python_dir, "tcl")
+    tcl_dst = os.path.join(python_dir, "tcl")
+
+    if os.path.exists(tcl_lib):
+        try:
+            if os.path.exists(tcl_dst):
+                shutil.rmtree(tcl_dst)
+            shutil.copytree(tcl_lib, tcl_dst)
+            copied.append("tcl/")
+        except Exception as e:
+            errors.append(f"tcl folder: {e}")
+    else:
+        # Try alternate location
+        for folder in ["tcl8.6", "tk8.6"]:
+            alt_src = os.path.join(lib_src, folder)
+            alt_dst = os.path.join(lib_dst, folder)
+            if os.path.exists(alt_src):
+                try:
+                    if os.path.exists(alt_dst):
+                        shutil.rmtree(alt_dst)
+                    shutil.copytree(alt_src, alt_dst)
+                    copied.append(f"{folder}/")
+                except Exception as e:
+                    errors.append(f"{folder}: {e}")
+
+    # Report results
+    if copied:
+        log(f"Copied tkinter files: {', '.join(copied)}", "SUCCESS")
+
+    if errors:
+        for err in errors:
+            log(f"Warning: {err}", "WARNING")
+
+    # Verify tkinter works
+    python_exe = os.path.join(python_dir, "python.exe")
+    if os.path.exists(python_exe):
+        log("Testing tkinter import...")
+        result = subprocess.run(
+            [python_exe, "-c", "import tkinter; print('tkinter OK')"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            log("tkinter import test: PASSED", "SUCCESS")
+            return True
+        else:
+            log(f"tkinter import test: FAILED - {result.stderr}", "WARNING")
+            return False
+
+    return len(copied) > 0
+
+
 def install_dependencies(build_dir):
     """Install Python dependencies."""
     python_dir = os.path.join(build_dir, "python")
@@ -712,41 +842,47 @@ def main():
         return 1
     print()
 
-    # Step 3: Install dependencies
-    log("Step 3: Installing dependencies...", "INFO")
+    # Step 3: Setup tkinter (required for GUI)
+    log("Step 3: Setting up tkinter...", "INFO")
+    if not setup_tkinter(build_dir):
+        log("tkinter setup had issues - GUI may not work", "WARNING")
+    print()
+
+    # Step 4: Install dependencies
+    log("Step 4: Installing dependencies...", "INFO")
     if not install_dependencies(build_dir):
         log("Some dependencies may not be installed", "WARNING")
     print()
 
-    # Step 4: Setup FFmpeg
-    log("Step 4: Setting up FFmpeg...", "INFO")
+    # Step 5: Setup FFmpeg
+    log("Step 5: Setting up FFmpeg...", "INFO")
     if not setup_ffmpeg(build_dir):
         log("FFmpeg setup failed - manual installation required", "WARNING")
     print()
 
-    # Step 5: Copy application files
-    log("Step 5: Copying application files...", "INFO")
+    # Step 6: Copy application files
+    log("Step 6: Copying application files...", "INFO")
     if not copy_app_files(build_dir):
         log("Failed to copy app files", "ERROR")
         return 1
     print()
 
-    # Step 6: Create launcher
-    log("Step 6: Creating launcher...", "INFO")
+    # Step 7: Create launcher
+    log("Step 7: Creating launcher...", "INFO")
     if not create_launcher(build_dir):
         log("Failed to create launcher", "ERROR")
         return 1
     print()
 
-    # Step 7: Create batch files
-    log("Step 7: Creating batch files...", "INFO")
+    # Step 8: Create batch files
+    log("Step 8: Creating batch files...", "INFO")
     if not create_run_bat(build_dir):
         log("Failed to create batch files", "ERROR")
         return 1
     print()
 
-    # Step 8: Create README
-    log("Step 8: Creating documentation...", "INFO")
+    # Step 9: Create README
+    log("Step 9: Creating documentation...", "INFO")
     create_readme(build_dir)
     print()
 

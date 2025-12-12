@@ -23,8 +23,40 @@ from datetime import datetime, timedelta
 from copy import deepcopy
 
 # GUI
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
+TKINTER_AVAILABLE = False
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
+    TKINTER_AVAILABLE = True
+except ImportError as e:
+    print("=" * 60)
+    print("CRITICAL ERROR: tkinter is not available!")
+    print("=" * 60)
+    print(f"Error: {e}")
+    print()
+    print("This application requires tkinter to run.")
+    print()
+    print("Solutions:")
+    print("1. If using portable version: Run build_portable.py again")
+    print("2. If using installed Python: Reinstall Python with tkinter")
+    print("   On Windows: Check 'tcl/tk and IDLE' during installation")
+    print("   On Linux: sudo apt-get install python3-tk")
+    print("   On Mac: brew install python-tk")
+    print()
+    print("Required tkinter files (for portable):")
+    print("  - python/DLLs/_tkinter.pyd")
+    print("  - python/tcl86t.dll, python/tk86t.dll")
+    print("  - python/tcl/ folder")
+    print("  - python/Lib/tkinter/ folder")
+    print("=" * 60)
+    print()
+    print("Press Enter to exit...")
+    try:
+        input()
+    except:
+        pass
+    import sys
+    sys.exit(1)
 
 # PIL
 try:
