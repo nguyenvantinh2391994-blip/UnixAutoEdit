@@ -1135,7 +1135,8 @@ class UnixAutoEdit:
         self.stop_flag = False
         self.process_times = []
         self.folder_data = {}
-        
+        self.completed_outputs = {}  # Store output paths: {folder_name: output_path}
+
         self.preview_source_image = None
         
         detect_gpu()
@@ -1311,6 +1312,11 @@ class UnixAutoEdit:
                                  bg=COLORS["error"], fg="#FFFFFF", relief=tk.FLAT, cursor="hand2",
                                  activebackground="#dc2626", command=self.stop_process, state=tk.DISABLED)
         self.stop_btn.pack(fill=tk.X, ipady=8, pady=(10, 0))
+
+        self.open_btn = tk.Button(btn_frame, text="📂  MỞ FILE HOÀN THÀNH", font=("Segoe UI", 10),
+                                 bg=COLORS["bg_card"], fg=COLORS["text_primary"], relief=tk.FLAT, cursor="hand2",
+                                 activebackground=COLORS["bg_secondary"], command=self.open_completed_file)
+        self.open_btn.pack(fill=tk.X, ipady=6, pady=(10, 0))
 
         # ===== RIGHT PANEL - FILE LIST =====
         right = tk.Frame(parent, bg=COLORS["bg_main"])
@@ -2073,19 +2079,14 @@ class UnixAutoEdit:
         margin_bottom = self.margin_var.get()
         outline_width = self.outline_var.get() if hasattr(self, 'outline_var') else 3
 
-        # Scale font size based on target resolution (ASS uses 1080p as base)
-        # FFmpeg scales ASS subtitles proportionally when rendering to different resolutions
-        scale_factor = target_h / 1080
-        scaled_font_size = int(font_size * scale_factor)
-        scaled_margin = int(margin_bottom * scale_factor)
-        scaled_outline = max(1, int(outline_width * scale_factor))
-
+        # FFmpeg force_style uses FontSize literally without resolution scaling
+        # So preview should also use font_size directly
         try:
             font_file = self.font_file_var.get()
             if font_file and os.path.exists(font_file):
-                font = ImageFont.truetype(font_file, scaled_font_size)
+                font = ImageFont.truetype(font_file, font_size)
             else:
-                font = ImageFont.truetype("arial.ttf", scaled_font_size)
+                font = ImageFont.truetype("arial.ttf", font_size)
         except:
             font = ImageFont.load_default()
 
@@ -2094,12 +2095,12 @@ class UnixAutoEdit:
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         text_x = (target_w - text_w) // 2
-        # Match ASS subtitle positioning (margin from bottom edge) - use scaled margin
-        text_y = target_h - scaled_margin - text_h
+        # Position from bottom edge
+        text_y = target_h - margin_bottom - text_h
 
         outline_color = self.outlinecolor_var.get()
-        for dx in range(-scaled_outline, scaled_outline + 1):
-            for dy in range(-scaled_outline, scaled_outline + 1):
+        for dx in range(-outline_width, outline_width + 1):
+            for dy in range(-outline_width, outline_width + 1):
                 if dx or dy:
                     draw.text((text_x + dx, text_y + dy), sample_text, font=font, fill=outline_color)
         draw.text((text_x, text_y), sample_text, font=font, fill=self.fontcolor_var.get())
@@ -2313,10 +2314,14 @@ class UnixAutoEdit:
                     break
                 path, tpl_name = futures[future]
                 completed += 1
-                ok, status, _, elapsed = future.result()
+                ok, status, output_path, elapsed = future.result()
                 if ok and status == "success":
                     success += 1
                     self.process_times.append(elapsed)
+                    # Store output path for "Open file" feature
+                    if output_path:
+                        folder_name = os.path.basename(path)
+                        self.completed_outputs[folder_name] = output_path
                 elif status != "skipped":
                     failed += 1
                 percent = completed / total * 100
@@ -2359,6 +2364,48 @@ class UnixAutoEdit:
     def stop_process(self):
         self.stop_flag = True
         self.log("⏹ Đang dừng xử lý...")
+
+    def open_completed_file(self):
+        """Open the completed output file for selected item"""
+        selection = self.tree.selection()
+        if not selection:
+            messagebox.showinfo("Thông báo", "Vui lòng chọn file đã hoàn thành trong danh sách")
+            return
+
+        item = selection[0]
+        values = self.tree.item(item, 'values')
+        folder_name = values[0]
+
+        if folder_name in self.completed_outputs:
+            output_path = self.completed_outputs[folder_name]
+            if os.path.exists(output_path):
+                # Open file with default application
+                import subprocess
+                if sys.platform == 'win32':
+                    os.startfile(output_path)
+                elif sys.platform == 'darwin':
+                    subprocess.run(['open', output_path])
+                else:
+                    subprocess.run(['xdg-open', output_path])
+                self.log(f"📂 Mở file: {output_path}")
+            else:
+                messagebox.showwarning("Cảnh báo", f"File không tồn tại:\n{output_path}")
+        else:
+            # Check if output exists in output folder
+            output_folder = self.output_var.get()
+            output_path = os.path.join(output_folder, f"{folder_name}.mp4")
+            if os.path.exists(output_path):
+                if sys.platform == 'win32':
+                    os.startfile(output_path)
+                elif sys.platform == 'darwin':
+                    import subprocess
+                    subprocess.run(['open', output_path])
+                else:
+                    import subprocess
+                    subprocess.run(['xdg-open', output_path])
+                self.log(f"📂 Mở file: {output_path}")
+            else:
+                messagebox.showinfo("Thông báo", "File chưa hoàn thành hoặc chưa được xử lý")
 
 
 # ===== MAIN =====
