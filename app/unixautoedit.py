@@ -1692,7 +1692,10 @@ class UnixAutoEdit:
         if text:
             self.progress_label.config(text=text)
         if eta_seconds >= 0:
-            self.eta_label.config(text=f"⏱ Còn lại: {format_time(eta_seconds)}")
+            # Calculate estimated finish time
+            finish_time = datetime.now() + timedelta(seconds=eta_seconds)
+            finish_str = finish_time.strftime("%H:%M")
+            self.eta_label.config(text=f"⏱ Còn: {format_time(eta_seconds)} | Xong lúc: {finish_str}")
         else:
             self.eta_label.config(text="")
     
@@ -2252,6 +2255,8 @@ class UnixAutoEdit:
         self.log(f"{'='*50}")
         self.log(f"▶ BẮT ĐẦU XỬ LÝ: {total} video | Workers: {workers}")
         self.log(f"{'='*50}")
+        # Show initial progress immediately
+        self.root.after(0, lambda: self.update_progress(0, f"Đang xử lý: 0/{total} video...", -1))
         def log_fn(msg):
             self.root.after(0, lambda m=msg: self.log(m))
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
