@@ -83,6 +83,7 @@ except ImportError as e:
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/nguyenvantinh2391994-blip/UnixAutoEdit/main"
 VERSION_URL = f"{GITHUB_RAW_BASE}/version.txt"
 SCRIPT_URL = f"{GITHUB_RAW_BASE}/unixautoedit.py"
+LAUNCHER_URL = f"{GITHUB_RAW_BASE}/app/launcher.py"  # Launcher tự update
 
 # Connection settings
 TIMEOUT = 15  # seconds
@@ -92,6 +93,7 @@ MAX_RETRIES = 2
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCRIPT_DIR)
 APP_SCRIPT = os.path.join(SCRIPT_DIR, "unixautoedit.py")
+LAUNCHER_SCRIPT = os.path.join(SCRIPT_DIR, "launcher.py")  # Chính nó
 VERSION_FILE = os.path.join(SCRIPT_DIR, "version.txt")
 
 
@@ -197,9 +199,11 @@ def compare_versions(local, remote):
 
 
 def download_update():
-    """Download the new script version"""
+    """Download the new script version and launcher"""
     try:
         log("Downloading update...")
+
+        # 1. Download main script (unixautoedit.py)
         content = fetch_url(SCRIPT_URL, timeout=60)
 
         # Validate content
@@ -228,7 +232,24 @@ def download_update():
         with open(APP_SCRIPT, "wb") as f:
             f.write(content)
 
-        log(f"Update downloaded: {len(content)} bytes")
+        log(f"Main script updated: {len(content)} bytes")
+
+        # 2. Download launcher.py (tự update chính nó)
+        try:
+            log("Updating launcher...")
+            launcher_content = fetch_url(LAUNCHER_URL, timeout=30)
+
+            if len(launcher_content) > 1000:
+                launcher_str = launcher_content.decode("utf-8", errors="ignore")
+                if "import" in launcher_str and "def " in launcher_str:
+                    # Save new launcher
+                    with open(LAUNCHER_SCRIPT, "wb") as f:
+                        f.write(launcher_content)
+                    log(f"Launcher updated: {len(launcher_content)} bytes")
+        except Exception as e:
+            log(f"Launcher update skipped: {e}")
+            # Không fail nếu không update được launcher
+
         return True
 
     except Exception as e:
