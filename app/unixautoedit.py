@@ -981,17 +981,22 @@ def render_final(visual_path, audio_path, output_path, template, ass_path=None, 
     
     return output_path
 
-def process_folder(folder_path, output_folder, template, log_fn=None):
+def process_folder(folder_path, output_folder, template, log_fn=None, progress_fn=None):
     """Process folder - FIX VIETNAMESE FONT"""
-    
+
     folder_name = os.path.basename(folder_path)
     output_path = os.path.join(output_folder, f"{folder_name}.mp4")
     use_gpu = template.get("use_gpu", True) and GPU_INFO.get("nvenc", False)
     start_time = time.time()
-    
+
     def log(msg):
         if log_fn:
             log_fn(f"[{folder_name}] {msg}")
+
+    def report_progress(step_percent):
+        """Report progress within this video (0-100)"""
+        if progress_fn:
+            progress_fn(step_percent)
     
     if os.path.exists(output_path):
         log("Đã tồn tại - Bỏ qua")
@@ -1016,12 +1021,15 @@ def process_folder(folder_path, output_folder, template, log_fn=None):
         return False, "no_visual", None, 0
     
     log(f"Bắt đầu: {audio_duration:.1f}s | {len(video_files)} video | {len(image_files)} ảnh")
-    
+    report_progress(5)  # Started
+
     tmp_dir = tempfile.mkdtemp(prefix="ve_")
-    
+
     try:
         log("Đang tạo phụ đề...")
+        report_progress(10)
         srt_path = generate_srt(audio_file, tmp_dir, template)
+        report_progress(35)  # Subtitles done
         ass_path = os.path.join(tmp_dir, "subs.ass")
         
         font_tmp_dir = os.path.join(tmp_dir, "fonts")
@@ -1061,29 +1069,38 @@ def process_folder(folder_path, output_folder, template, log_fn=None):
                         pass
         
         log("Đang tạo clips...")
+        report_progress(40)
         clips = []
-        
+
         if video_files:
-            for vf in video_files:
+            for i, vf in enumerate(video_files):
                 out = os.path.join(tmp_dir, f"clip_{len(clips):04d}.mp4")
                 create_video_clip(vf, out, template, use_gpu=use_gpu)
                 clips.append(out)
-        
+                clip_progress = 40 + int(15 * (i + 1) / len(video_files))
+                report_progress(clip_progress)
+
         if image_files:
             remaining = audio_duration - sum(get_video_duration(c) for c in clips)
             if remaining > 0:
                 dur_per_img = remaining / len(image_files)
-                for img in image_files:
+                for i, img in enumerate(image_files):
                     out = os.path.join(tmp_dir, f"clip_{len(clips):04d}.mp4")
                     create_image_clip(img, out, dur_per_img, template, use_gpu=use_gpu)
                     clips.append(out)
-        
+                    clip_progress = 55 + int(10 * (i + 1) / len(image_files))
+                    report_progress(clip_progress)
+
         log("Đang ghép clips...")
+        report_progress(70)
         visual = os.path.join(tmp_dir, "visual.mp4")
         merge_clips(clips, visual, template, use_gpu)
-        
+        report_progress(75)
+
         log("Đang render...")
+        report_progress(80)
         render_final(visual, audio_file, output_path, template, ass_path=ass_path, font_dir=font_tmp_dir, duration=audio_duration, use_gpu=use_gpu)
+        report_progress(100)
         
         elapsed = time.time() - start_time
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
@@ -2056,13 +2073,19 @@ class UnixAutoEdit:
         margin_bottom = self.margin_var.get()
         outline_width = self.outline_var.get() if hasattr(self, 'outline_var') else 3
 
+        # Scale font size based on target resolution (ASS uses 1080p as base)
+        # FFmpeg scales ASS subtitles proportionally when rendering to different resolutions
+        scale_factor = target_h / 1080
+        scaled_font_size = int(font_size * scale_factor)
+        scaled_margin = int(margin_bottom * scale_factor)
+        scaled_outline = max(1, int(outline_width * scale_factor))
+
         try:
             font_file = self.font_file_var.get()
-            # Use font_size directly - same as actual video rendering
             if font_file and os.path.exists(font_file):
-                font = ImageFont.truetype(font_file, font_size)
+                font = ImageFont.truetype(font_file, scaled_font_size)
             else:
-                font = ImageFont.truetype("arial.ttf", font_size)
+                font = ImageFont.truetype("arial.ttf", scaled_font_size)
         except:
             font = ImageFont.load_default()
 
@@ -2071,12 +2094,12 @@ class UnixAutoEdit:
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         text_x = (target_w - text_w) // 2
-        # Match ASS subtitle positioning (margin from bottom edge)
-        text_y = target_h - margin_bottom - text_h
-        
+        # Match ASS subtitle positioning (margin from bottom edge) - use scaled margin
+        text_y = target_h - scaled_margin - text_h
+
         outline_color = self.outlinecolor_var.get()
-        for dx in range(-outline_width, outline_width + 1):
-            for dy in range(-outline_width, outline_width + 1):
+        for dx in range(-scaled_outline, scaled_outline + 1):
+            for dy in range(-scaled_outline, scaled_outline + 1):
                 if dx or dy:
                     draw.text((text_x + dx, text_y + dy), sample_text, font=font, fill=outline_color)
         draw.text((text_x, text_y), sample_text, font=font, fill=self.fontcolor_var.get())
@@ -2255,13 +2278,26 @@ class UnixAutoEdit:
         workers = self.workers_var.get()
         use_gpu = self.gpu_var.get()
         start_time = time.time()
+        current_video_progress = [0]  # Use list to allow modification in nested function
+
         self.log(f"{'='*50}")
         self.log(f"▶ BẮT ĐẦU XỬ LÝ: {total} video | Workers: {workers}")
         self.log(f"{'='*50}")
         # Show initial progress immediately
         self.root.after(0, lambda: self.update_progress(0, f"Đang xử lý: 0/{total} video...", -1))
+
         def log_fn(msg):
             self.root.after(0, lambda m=msg: self.log(m))
+
+        def progress_fn(step_percent):
+            """Update progress for current video step"""
+            current_video_progress[0] = step_percent
+            # Calculate overall: completed videos + current video progress
+            overall = (completed + step_percent / 100) / total * 100
+            elapsed_total = time.time() - start_time
+            status_text = f"Video {completed + 1}/{total} ({step_percent}%) | ⏱ {format_time(elapsed_total)}"
+            self.root.after(0, lambda p=overall, t=status_text: self.update_progress(p, t, -1))
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
             futures = {}
             for path, template_name in folders_with_templates:
@@ -2270,7 +2306,7 @@ class UnixAutoEdit:
                 template_data = deepcopy(self.template_manager.get(template_name))
                 template_data["use_gpu"] = use_gpu
                 self.log(f"📋 {os.path.basename(path)} → Template: {template_name}")
-                future = executor.submit(process_folder, path, output_folder, template_data, log_fn)
+                future = executor.submit(process_folder, path, output_folder, template_data, log_fn, progress_fn)
                 futures[future] = (path, template_name)
             for future in concurrent.futures.as_completed(futures):
                 if self.stop_flag:
@@ -2306,8 +2342,14 @@ class UnixAutoEdit:
                     self.update_stats()
                 self.root.after(0, lambda p=path, o=ok: update_tree_item(p, o and status == "success"))
         elapsed_total = time.time() - start_time
+        end_time_str = datetime.now().strftime("%H:%M:%S")
+        start_time_str = (datetime.now() - timedelta(seconds=elapsed_total)).strftime("%H:%M:%S")
         self.log(f"{'='*50}")
-        self.log(f"✓ HOÀN THÀNH: {success} thành công | {failed} lỗi | Tổng: {format_time(elapsed_total)}")
+        self.log(f"✓ HOÀN THÀNH: {success} thành công | {failed} lỗi")
+        self.log(f"⏱ Bắt đầu: {start_time_str} | Kết thúc: {end_time_str} | Tổng: {format_time(elapsed_total)}")
+        if self.process_times:
+            avg = sum(self.process_times) / len(self.process_times)
+            self.log(f"📊 Trung bình: {format_time(avg)}/video")
         self.log(f"{'='*50}")
         self.root.after(0, lambda: self.update_progress(100, f"✓ Hoàn thành: {success} thành công, {failed} lỗi", -1))
         self.processing = False
