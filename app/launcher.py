@@ -17,6 +17,7 @@ import urllib.error
 import threading
 import time
 import traceback
+import hashlib
 
 # Try to import tkinter with helpful error message
 TKINTER_AVAILABLE = False
@@ -116,6 +117,22 @@ def get_local_version():
     except Exception as e:
         log(f"Error reading version: {e}")
         return "0.0.0"
+
+
+def get_file_hash(filepath):
+    """Calculate MD5 hash of a file"""
+    try:
+        if not os.path.exists(filepath):
+            return None
+        with open(filepath, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+    except:
+        return None
+
+
+def get_content_hash(content):
+    """Calculate MD5 hash of content bytes"""
+    return hashlib.md5(content).hexdigest()
 
 
 def fetch_url(url, timeout=TIMEOUT, retries=MAX_RETRIES):
@@ -519,23 +536,33 @@ def setup_environment():
 
 
 def check_and_update():
-    """Check for updates and auto-update if available"""
+    """Check for updates by comparing file content (hash-based)"""
     log("Checking for updates...")
 
-    local_ver = get_local_version()
-    remote_ver = get_remote_version()
+    # Get local file hash
+    local_hash = get_file_hash(APP_SCRIPT)
+    log(f"Local hash: {local_hash[:8] if local_hash else 'N/A'}...")
 
-    if remote_ver is None:
-        log("Offline mode - skipping update check")
+    # Fetch remote file to compare
+    try:
+        log(f"Fetching remote script...")
+        remote_content = fetch_url(SCRIPT_URL, timeout=30)
+        remote_hash = get_content_hash(remote_content)
+        log(f"Remote hash: {remote_hash[:8]}...")
+    except Exception as e:
+        log(f"Could not fetch remote: {e}")
+        log("Offline mode - skipping update")
         return True
 
-    if compare_versions(local_ver, remote_ver):
-        log(f"Update available: {local_ver} -> {remote_ver}")
-        log("Auto-updating...")
+    # Compare hashes - update if different
+    if local_hash != remote_hash:
+        log("Content changed - updating...")
+
+        # Get version for display
+        remote_ver = get_remote_version() or "new"
 
         # Check if tkinter is available for progress dialog
         if not TKINTER_AVAILABLE:
-            # Update without GUI
             log("Downloading update (no GUI)...")
             if download_update():
                 update_local_version(remote_ver)
@@ -545,7 +572,6 @@ def check_and_update():
             return True
 
         try:
-            # Show progress dialog and auto-update
             progress = ProgressDialog()
             success = progress.run_update(remote_ver)
 
@@ -558,7 +584,8 @@ def check_and_update():
             log(f"Update error: {e}")
             log("Continuing with current version...")
     else:
-        log(f"Already at latest version: {local_ver}")
+        local_ver = get_local_version()
+        log(f"Already up to date (v{local_ver})")
 
     return True
 
