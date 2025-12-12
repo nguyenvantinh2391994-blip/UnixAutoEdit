@@ -498,7 +498,7 @@ def setup_environment():
 
 
 def check_and_update():
-    """Check for updates and prompt user if available"""
+    """Check for updates and auto-update if available"""
     log("Checking for updates...")
 
     local_ver = get_local_version()
@@ -510,33 +510,32 @@ def check_and_update():
 
     if compare_versions(local_ver, remote_ver):
         log(f"Update available: {local_ver} -> {remote_ver}")
+        log("Auto-updating...")
 
-        # Check if tkinter is available for GUI dialogs
+        # Check if tkinter is available for progress dialog
         if not TKINTER_AVAILABLE:
-            log("tkinter not available - skipping update dialog")
-            log("To update manually, download the latest version from GitHub")
+            # Update without GUI
+            log("Downloading update (no GUI)...")
+            if download_update():
+                update_local_version(remote_ver)
+                log("Update completed successfully!")
+            else:
+                log("Update failed - continuing with current version")
             return True
 
         try:
-            # Show update dialog
-            dialog = UpdateDialog(local_ver, remote_ver)
-            should_update = dialog.show()
+            # Show progress dialog and auto-update
+            progress = ProgressDialog()
+            success = progress.run_update(remote_ver)
 
-            if should_update:
-                progress = ProgressDialog()
-                success = progress.run_update(remote_ver)
-
-                if success:
-                    log("Update completed successfully")
-                else:
-                    log("Update failed")
-
-                return True
+            if success:
+                log("Update completed successfully")
             else:
-                log("User skipped update")
+                log("Update failed - continuing with current version")
+
         except Exception as e:
-            log(f"Update dialog error: {e}")
-            log("Continuing without update...")
+            log(f"Update error: {e}")
+            log("Continuing with current version...")
     else:
         log(f"Already at latest version: {local_ver}")
 
