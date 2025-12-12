@@ -1739,13 +1739,15 @@ class UnixAutoEdit:
                     path = os.path.join(FONTS_DIR, f)
                     if get_font_name_from_file(path) == font_name:
                         self.font_file_var.set(path)
+                        self.update_preview()
                         return
         sys_path = find_system_font(font_name)
         if sys_path:
             self.font_file_var.set(sys_path)
         else:
             self.font_file_var.set("")
-    
+        self.update_preview()
+
     def create_overlays(self):
         self.log("Đang tạo video overlay...")
         created = 0
