@@ -1371,22 +1371,24 @@ class UnixAutoEdit:
         tree_frame = tk.Frame(right, bg=COLORS["bg_secondary"])
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
-        cols = ("name", "template", "status", "audio", "video", "img")
+        cols = ("name", "template", "status", "open", "audio", "video", "img")
         self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=12, selectmode="extended")
 
         self.tree.heading("name", text="Tên thư mục")
         self.tree.heading("template", text="Template")
         self.tree.heading("status", text="Trạng thái")
+        self.tree.heading("open", text="Mở")
         self.tree.heading("audio", text="🎵")
         self.tree.heading("video", text="🎬")
         self.tree.heading("img", text="🖼")
 
-        self.tree.column("name", width=200)
-        self.tree.column("template", width=120)
-        self.tree.column("status", width=100)
-        self.tree.column("audio", width=50, anchor=tk.CENTER)
-        self.tree.column("video", width=50, anchor=tk.CENTER)
-        self.tree.column("img", width=50, anchor=tk.CENTER)
+        self.tree.column("name", width=180)
+        self.tree.column("template", width=100)
+        self.tree.column("status", width=80)
+        self.tree.column("open", width=50, anchor=tk.CENTER)
+        self.tree.column("audio", width=40, anchor=tk.CENTER)
+        self.tree.column("video", width=40, anchor=tk.CENTER)
+        self.tree.column("img", width=40, anchor=tk.CENTER)
 
         scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
@@ -1397,6 +1399,7 @@ class UnixAutoEdit:
         # Bind events
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
         self.tree.bind("<Double-1>", self.on_tree_double_click)  # Double-click to change template
+        self.tree.bind("<Button-1>", self.on_tree_click)  # Single click to open file
 
         # Start auto-refresh for file list
         self._last_folder_mtime = 0
@@ -1826,6 +1829,42 @@ class UnixAutoEdit:
         else:
             self.selection_label.config(text=f"Đã chọn: {count} mục")
 
+    def on_tree_click(self, event=None):
+        """Single click - check if clicked on 'open' column to open file"""
+        item = self.tree.identify_row(event.y)
+        column = self.tree.identify_column(event.x)
+
+        if not item:
+            return
+
+        # Column #4 is "open" (index 3)
+        col_idx = int(column.replace("#", "")) - 1
+        if col_idx == 3:  # "open" column
+            values = self.tree.item(item, 'values')
+            if len(values) > 3 and values[3] == "📂":
+                folder_name = values[0]
+                self._open_output_file(folder_name)
+
+    def _open_output_file(self, folder_name):
+        """Open the output file for the given folder"""
+        if folder_name in self.completed_outputs:
+            output_path = self.completed_outputs[folder_name]
+        else:
+            output_folder = self.output_var.get()
+            output_path = os.path.join(output_folder, f"{folder_name}.mp4")
+
+        if os.path.exists(output_path):
+            import subprocess
+            if sys.platform == 'win32':
+                os.startfile(output_path)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', output_path])
+            else:
+                subprocess.run(['xdg-open', output_path])
+            self.log(f"📂 Mở file: {output_path}")
+        else:
+            messagebox.showinfo("Thông báo", f"File không tồn tại:\n{output_path}")
+
     def on_tree_double_click(self, event=None):
         """Double-click on a row to change its template via popup menu"""
         item = self.tree.identify_row(event.y)
@@ -1990,10 +2029,13 @@ class UnixAutoEdit:
             video = len(list_media_files(path, (".mp4", ".mov", ".mkv")))
             img = len(list_media_files(path, (".jpg", ".jpeg", ".png", ".webp")))
             out_path = os.path.join(output_folder, f"{name}.mp4") if output_folder else ""
+            open_btn = ""  # Empty by default
             if out_path and os.path.exists(out_path):
                 status = "✓ Xong"
                 tag = "done"
                 enabled = False
+                open_btn = "📂"  # Show open icon
+                self.completed_outputs[name] = out_path  # Store for quick access
             elif audio and (video or img):
                 status = "✓ Chờ xử lý"
                 tag = "enabled"
@@ -2004,7 +2046,7 @@ class UnixAutoEdit:
                 enabled = False
             default_tpl = self.template_var.get()
             self.folder_data[path] = {"enabled": enabled, "template": default_tpl}
-            self.tree.insert("", tk.END, values=(name, default_tpl, status, audio, video, img), tags=(tag,))
+            self.tree.insert("", tk.END, values=(name, default_tpl, status, open_btn, audio, video, img), tags=(tag,))
         self.tree.tag_configure("done", foreground=COLORS["success"])
         self.tree.tag_configure("enabled", foreground=COLORS["warning"])
         self.tree.tag_configure("error", foreground=COLORS["error"])
@@ -2339,9 +2381,11 @@ class UnixAutoEdit:
                         if values[0] == os.path.basename(folder_path):
                             if is_ok:
                                 values[2] = "✓ Xong"
+                                values[3] = "📂"  # Show open button
                                 self.tree.item(item, values=values, tags=("done",))
                             else:
                                 values[2] = "✗ Lỗi"
+                                values[3] = ""  # No open button for failed
                                 self.tree.item(item, values=values, tags=("error",))
                             break
                     self.update_stats()
