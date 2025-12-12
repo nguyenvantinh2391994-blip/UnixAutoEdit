@@ -1424,10 +1424,12 @@ class UnixAutoEdit:
         
         self.create_label(res_row, "Rộng:", pack=False).pack(side=tk.LEFT)
         self.width_var = tk.IntVar(value=1920)
+        self.width_var.trace_add("write", self.update_preview)
         self.create_entry(res_row, self.width_var, width=8).pack(side=tk.LEFT, padx=(5, 20))
-        
+
         self.create_label(res_row, "Cao:", pack=False).pack(side=tk.LEFT)
         self.height_var = tk.IntVar(value=1080)
+        self.height_var.trace_add("write", self.update_preview)
         self.create_entry(res_row, self.height_var, width=8).pack(side=tk.LEFT, padx=5)
         
         preset_row = tk.Frame(res_card, bg=COLORS["bg_card"])
@@ -1709,6 +1711,7 @@ class UnixAutoEdit:
     def set_resolution(self, w, h):
         self.width_var.set(w)
         self.height_var.set(h)
+        self.update_preview()
     
     def browse_input(self):
         folder = filedialog.askdirectory()
