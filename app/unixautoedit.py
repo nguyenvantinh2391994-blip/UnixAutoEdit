@@ -261,7 +261,7 @@ DEFAULT_TEMPLATE = {
     "transition_enabled": True,
     "transition_duration": 0.8,
     "whisper_model": "tiny",
-    "whisper_language": "vi",
+    "whisper_language": "en",
     "use_gpu": True,
 }
 
@@ -411,11 +411,13 @@ def get_font_name_from_file(font_path):
     return os.path.splitext(os.path.basename(font_path))[0]
 
 def find_system_font(font_name):
-    """Tìm font trong hệ thống Windows"""
+    """Tìm font trong thư mục fonts của app và hệ thống Windows"""
     if not font_name:
         return None
-    
+
+    # Tìm trong FONTS_DIR của app TRƯỚC, sau đó mới tìm trong hệ thống
     font_dirs = [
+        FONTS_DIR,  # Thư mục fonts bên cạnh app
         os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts'),
         os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Microsoft', 'Windows', 'Fonts'),
     ]
