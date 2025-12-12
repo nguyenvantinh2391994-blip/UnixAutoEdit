@@ -334,39 +334,52 @@ class ResourceMonitor:
             return psutil.virtual_memory().percent
         return 50
 
-    def get_optimal_workers(self, use_gpu=True):
+    def get_optimal_workers(self, render_mode="gpu"):
         """Calculate optimal number of workers based on current resource usage"""
         cpu_usage = self.get_cpu_usage()
         mem_usage = self.get_memory_usage()
-        gpu_usage = self.get_gpu_usage() if use_gpu else 0
+        gpu_usage = self.get_gpu_usage()
 
         cpu_headroom = max(0, self.target_usage - cpu_usage)
         mem_headroom = max(0, self.target_usage - mem_usage)
-        gpu_headroom = max(0, self.target_usage - gpu_usage) if use_gpu else 100
+        gpu_headroom = max(0, self.target_usage - gpu_usage)
 
-        cpu_workers = max(1, int(cpu_headroom / 25))
-        mem_workers = max(1, int(mem_headroom / 20))
-        gpu_workers = max(1, int(gpu_headroom / 30)) if use_gpu else self.cpu_count
+        cpu_workers = max(1, int(cpu_headroom / 15))
+        mem_workers = max(1, int(mem_headroom / 15))
+        gpu_workers = max(1, int(gpu_headroom / 20))
 
-        optimal = min(cpu_workers, mem_workers, gpu_workers, self.cpu_count)
-        return max(1, min(optimal, 8))
+        if render_mode == "max":
+            optimal = min(cpu_workers + gpu_workers, mem_workers, self.cpu_count + 2)
+        elif render_mode == "gpu":
+            optimal = min(cpu_workers, mem_workers, gpu_workers, self.cpu_count)
+        else:
+            optimal = min(cpu_workers, mem_workers, self.cpu_count)
 
-    def can_add_worker(self, use_gpu=True):
+        return max(2, min(optimal, 8))
+
+    def can_add_worker(self, render_mode="gpu"):
         """Check if we can safely add another worker"""
         cpu_usage = self.get_cpu_usage()
         mem_usage = self.get_memory_usage()
-        gpu_usage = self.get_gpu_usage() if use_gpu else 0
+        gpu_usage = self.get_gpu_usage()
 
-        return (cpu_usage < self.target_usage and
-                mem_usage < self.target_usage and
-                (not use_gpu or gpu_usage < self.target_usage))
+        if render_mode == "max":
+            return (mem_usage < self.target_usage and
+                    (cpu_usage < self.target_usage or gpu_usage < self.target_usage))
+        elif render_mode == "gpu":
+            return (cpu_usage < self.target_usage and
+                    mem_usage < self.target_usage and
+                    gpu_usage < self.target_usage)
+        else:
+            return (cpu_usage < self.target_usage and
+                    mem_usage < self.target_usage)
 
-    def get_status(self, use_gpu=True):
+    def get_status(self, render_mode="gpu"):
         """Get current resource status string"""
         cpu = self.get_cpu_usage()
         mem = self.get_memory_usage()
         status = f"CPU: {cpu:.0f}% | RAM: {mem:.0f}%"
-        if use_gpu and self._gpu_available:
+        if self._gpu_available:
             gpu = self.get_gpu_usage()
             status += f" | GPU: {gpu:.0f}%"
         return status
@@ -1261,27 +1274,34 @@ class UnixAutoEdit:
         config = {
             "input_folder": self.input_var.get(), "output_folder": self.output_var.get(),
             "max_workers": self.workers_var.get(), "skip_existing": self.skip_var.get(),
-            "use_gpu": self.gpu_var.get(), "auto_workers": self.auto_workers_var.get(),
+            "render_mode": self.render_mode_var.get(), "auto_workers": self.auto_workers_var.get(),
             "resource_limit": self.resource_limit_var.get()
         }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
 
+    def _on_render_mode_change(self):
+        """Called when render mode changes"""
+        self._update_resource_status()
+        if self.auto_workers_var.get():
+            self._toggle_auto_workers()
+
     def _toggle_auto_workers(self):
         """Toggle auto workers mode"""
+        render_mode = self.render_mode_var.get()
         if self.auto_workers_var.get():
-            self.workers_spinbox.configure(state=tk.DISABLED)
-            optimal = resource_monitor.get_optimal_workers(self.gpu_var.get())
+            optimal = resource_monitor.get_optimal_workers(render_mode)
             self.workers_var.set(optimal)
-        else:
-            self.workers_spinbox.configure(state=tk.NORMAL)
+        self.workers_spinbox.configure(state=tk.NORMAL)
 
     def _update_resource_status(self):
         """Update resource usage display"""
         try:
-            status = resource_monitor.get_status(self.gpu_var.get())
-            optimal = resource_monitor.get_optimal_workers(self.gpu_var.get())
-            self.resource_label.configure(text=f"📊 {status} | Đề xuất: {optimal} workers")
+            render_mode = self.render_mode_var.get()
+            status = resource_monitor.get_status(render_mode)
+            optimal = resource_monitor.get_optimal_workers(render_mode)
+            mode_text = {"max": "Tối đa", "gpu": "GPU", "cpu": "CPU"}.get(render_mode, render_mode)
+            self.resource_label.configure(text=f"📊 {status} | {mode_text}: {optimal} workers")
         except:
             self.resource_label.configure(text="📊 Không thể đọc tài nguyên")
         if hasattr(self, 'root') and self.root.winfo_exists():
@@ -1399,17 +1419,22 @@ class UnixAutoEdit:
         self.create_entry(out_row, self.output_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.create_button(out_row, "📁", self.browse_output, width=3).pack(side=tk.RIGHT, padx=(8, 0))
         
-        opt_card = self.create_card(left, "⚡ TÙY CHỌN", 180)
-        
+        opt_card = self.create_card(left, "⚡ TÙY CHỌN", 200)
+
         render_row = tk.Frame(opt_card, bg=COLORS["bg_card"])
         render_row.pack(fill=tk.X, pady=5)
-        
+
         self.create_label(render_row, "Render:", pack=False).pack(side=tk.LEFT)
-        self.gpu_var = tk.BooleanVar(value=self.config.get("use_gpu", True) and GPU_INFO.get("nvenc", False))
-        
+        default_render = self.config.get("render_mode", "max" if GPU_INFO.get("nvenc") else "cpu")
+        self.render_mode_var = tk.StringVar(value=default_render)
+
         gpu_state = tk.NORMAL if GPU_INFO.get("nvenc") else tk.DISABLED
-        ttk.Radiobutton(render_row, text="🚀 GPU", variable=self.gpu_var, value=True, state=gpu_state).pack(side=tk.LEFT, padx=15)
-        ttk.Radiobutton(render_row, text="💻 CPU", variable=self.gpu_var, value=False).pack(side=tk.LEFT)
+        ttk.Radiobutton(render_row, text="⚡ Tối đa", variable=self.render_mode_var, value="max",
+                       state=gpu_state, command=self._on_render_mode_change).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(render_row, text="🚀 GPU", variable=self.render_mode_var, value="gpu",
+                       state=gpu_state, command=self._on_render_mode_change).pack(side=tk.LEFT, padx=8)
+        ttk.Radiobutton(render_row, text="💻 CPU", variable=self.render_mode_var, value="cpu",
+                       command=self._on_render_mode_change).pack(side=tk.LEFT, padx=8)
         
         self.skip_var = tk.BooleanVar(value=self.config.get("skip_existing", True))
         ttk.Checkbutton(opt_card, text="Bỏ qua file đã có", variable=self.skip_var).pack(anchor=tk.W, pady=5)
@@ -2345,7 +2370,7 @@ class UnixAutoEdit:
             "transition_effects": [k for k, v in self.trans_effect_vars.items() if v.get()],
             "transition_duration": self.transdur_var.get(),
             "whisper_model": self.whisper_var.get(),
-            "whisper_language": self.lang_var.get(), "use_gpu": self.gpu_var.get(),
+            "whisper_language": self.lang_var.get(),
         }
     
     def load_template_to_ui(self, tpl):
@@ -2475,23 +2500,21 @@ class UnixAutoEdit:
         completed = 0
         success, failed = 0, 0
         output_folder = self.output_var.get()
-        use_gpu = self.gpu_var.get()
+        render_mode = self.render_mode_var.get()
         auto_mode = self.auto_workers_var.get()
         resource_limit = self.resource_limit_var.get()
         start_time = time.time()
         active_count = [0]
+        gpu_task_idx = [0]
 
         resource_monitor.target_usage = resource_limit
 
-        if auto_mode:
-            workers = resource_monitor.get_optimal_workers(use_gpu)
-            self.log(f"🔄 Auto-scaling: Bắt đầu với {workers} workers (giới hạn {resource_limit}%)")
-        else:
-            workers = self.workers_var.get()
+        workers = self.workers_var.get()
+        mode_text = {"max": "⚡ Tối đa (CPU+GPU)", "gpu": "🚀 GPU", "cpu": "💻 CPU"}.get(render_mode, render_mode)
 
         self.log(f"{'='*50}")
-        self.log(f"▶ BẮT ĐẦU XỬ LÝ: {total} video | Workers: {workers} | Auto: {'Bật' if auto_mode else 'Tắt'}")
-        self.log(f"📊 {resource_monitor.get_status(use_gpu)}")
+        self.log(f"▶ BẮT ĐẦU XỬ LÝ: {total} video | Workers: {workers} | Mode: {mode_text}")
+        self.log(f"📊 {resource_monitor.get_status(render_mode)}")
         self.log(f"{'='*50}")
         self.root.after(0, lambda: self.update_progress(0, f"Đang xử lý: 0/{total} video...", -1))
 
@@ -2502,11 +2525,11 @@ class UnixAutoEdit:
             overall = (completed + step_percent / 100) / total * 100
             elapsed_total = time.time() - start_time
             status_text = f"Video {completed + 1}/{total} ({step_percent}%) | ⏱ {format_time(elapsed_total)}"
-            if auto_mode and active_count[0] > 0:
+            if active_count[0] > 0:
                 status_text += f" | 🔄 {active_count[0]} workers"
             self.root.after(0, lambda p=overall, t=status_text: self.update_progress(p, t, -1))
 
-        max_workers = 8 if auto_mode else workers
+        max_workers = workers
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
@@ -2517,23 +2540,30 @@ class UnixAutoEdit:
                 nonlocal submitted
                 if not pending_tasks or self.stop_flag:
                     return False
+
                 current_active = len([f for f in futures if not f.done()])
-                if auto_mode:
-                    if current_active >= workers and not resource_monitor.can_add_worker(use_gpu):
-                        return False
-                    new_optimal = resource_monitor.get_optimal_workers(use_gpu)
-                    if new_optimal > workers and current_active < new_optimal:
+                if current_active >= workers:
+                    if auto_mode and resource_monitor.can_add_worker(render_mode):
                         pass
-                    elif current_active >= workers:
-                        return False
-                else:
-                    if current_active >= workers:
+                    else:
                         return False
 
                 path, template_name = pending_tasks.pop(0)
                 template_data = deepcopy(self.template_manager.get(template_name))
-                template_data["use_gpu"] = use_gpu
-                self.log(f"📋 {os.path.basename(path)} → Template: {template_name}")
+
+                if render_mode == "max":
+                    use_gpu_for_task = (gpu_task_idx[0] % 2 == 0)
+                    gpu_task_idx[0] += 1
+                    encoder = "GPU" if use_gpu_for_task else "CPU"
+                elif render_mode == "gpu":
+                    use_gpu_for_task = True
+                    encoder = "GPU"
+                else:
+                    use_gpu_for_task = False
+                    encoder = "CPU"
+
+                template_data["use_gpu"] = use_gpu_for_task
+                self.log(f"📋 {os.path.basename(path)} → {template_name} [{encoder}]")
                 future = executor.submit(process_folder, path, output_folder, template_data, log_fn, progress_fn)
                 futures[future] = (path, template_name)
                 submitted += 1
