@@ -933,31 +933,33 @@ def merge_clips(clips, output, template, use_gpu=True):
     shutil.move(merged, output)
     return output
 
-def create_overlay_video(effect_type, output_path, duration=10, width=1920, height=1080):
+def create_overlay_video(effect_type, output_path, duration=10, width=1920, height=1080, use_gpu=True):
     fps = 30
+    encoder_params = get_encoder_params(use_gpu, for_intermediate=True)
+
     if effect_type == "snow":
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d={duration}:r={fps}",
                "-vf", "noise=alls=100:allf=t,eq=brightness=-0.3:contrast=3,gblur=sigma=1.5,scroll=v=0.01:h=0",
-               "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", output_path]
+               *encoder_params, "-pix_fmt", "yuv420p", output_path]
     elif effect_type == "rain":
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d={duration}:r={fps}",
                "-vf", "noise=alls=80:allf=t,eq=brightness=-0.4:contrast=4,avgblur=sizeX=1:sizeY=10,scroll=v=0.05:h=0",
-               "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", output_path]
+               *encoder_params, "-pix_fmt", "yuv420p", output_path]
     elif effect_type == "bokeh":
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d={duration}:r={fps}",
                "-vf", "noise=alls=50:allf=t,eq=brightness=-0.5:contrast=5,gblur=sigma=25",
-               "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", output_path]
+               *encoder_params, "-pix_fmt", "yuv420p", output_path]
     elif effect_type == "dust":
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d={duration}:r={fps}",
                "-vf", "noise=alls=30:allf=t,eq=brightness=-0.6:contrast=6,gblur=sigma=2",
-               "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", output_path]
+               *encoder_params, "-pix_fmt", "yuv420p", output_path]
     elif effect_type == "light_leak":
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"gradients=s={width}x{height}:d={duration}:r={fps}:c0=orange:c1=red:c2=yellow:c3=orange",
                "-vf", "gblur=sigma=80,eq=brightness=-0.3:saturation=1.5,format=yuv420p",
-               "-c:v", "libx264", "-preset", "fast", "-crf", "23", output_path]
+               *encoder_params, output_path]
     else:
         cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i", f"color=c=black:s={width}x{height}:d={duration}:r={fps}",
-               "-vf", "noise=alls=30:allf=t", "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", output_path]
+               "-vf", "noise=alls=30:allf=t", *encoder_params, "-pix_fmt", "yuv420p", output_path]
     run_cmd(cmd)
     return os.path.exists(output_path)
 
@@ -2505,7 +2507,8 @@ class UnixAutoEdit:
         resource_limit = self.resource_limit_var.get()
         start_time = time.time()
         active_count = [0]
-        gpu_task_idx = [0]
+        gpu_tasks_running = [0]  # Track GPU tasks currently running
+        cpu_tasks_running = [0]  # Track CPU tasks currently running
 
         resource_monitor.target_usage = resource_limit
 
@@ -2551,21 +2554,45 @@ class UnixAutoEdit:
                 path, template_name = pending_tasks.pop(0)
                 template_data = deepcopy(self.template_manager.get(template_name))
 
+                # Determine GPU usage for this task
                 if render_mode == "max":
-                    use_gpu_for_task = (gpu_task_idx[0] % 2 == 0)
-                    gpu_task_idx[0] += 1
+                    # Smart distribution: assign to less loaded resource
+                    # Check actual resource usage for better distribution
+                    gpu_usage = resource_monitor.get_gpu_usage()
+                    cpu_usage = resource_monitor.get_cpu_usage()
+
+                    # Prefer the resource with more headroom
+                    if gpu_tasks_running[0] == 0 and cpu_tasks_running[0] == 0:
+                        # First task - use GPU if available
+                        use_gpu_for_task = GPU_INFO.get("nvenc", False)
+                    elif gpu_tasks_running[0] <= cpu_tasks_running[0] and gpu_usage < 85:
+                        # GPU has fewer tasks and not overloaded
+                        use_gpu_for_task = True
+                    elif cpu_usage < 85:
+                        # CPU has headroom
+                        use_gpu_for_task = False
+                    else:
+                        # Both resources busy, alternate
+                        use_gpu_for_task = gpu_tasks_running[0] <= cpu_tasks_running[0]
+
+                    if use_gpu_for_task:
+                        gpu_tasks_running[0] += 1
+                    else:
+                        cpu_tasks_running[0] += 1
                     encoder = "GPU" if use_gpu_for_task else "CPU"
                 elif render_mode == "gpu":
                     use_gpu_for_task = True
                     encoder = "GPU"
+                    gpu_tasks_running[0] += 1
                 else:
                     use_gpu_for_task = False
                     encoder = "CPU"
+                    cpu_tasks_running[0] += 1
 
                 template_data["use_gpu"] = use_gpu_for_task
-                self.log(f"📋 {os.path.basename(path)} → {template_name} [{encoder}]")
+                self.log(f"📋 {os.path.basename(path)} → {template_name} [{encoder}] (GPU:{gpu_tasks_running[0]} CPU:{cpu_tasks_running[0]})")
                 future = executor.submit(process_folder, path, output_folder, template_data, log_fn, progress_fn)
-                futures[future] = (path, template_name)
+                futures[future] = (path, template_name, use_gpu_for_task)  # Track which encoder
                 submitted += 1
                 active_count[0] = len([f for f in futures if not f.done()])
                 return True
@@ -2578,9 +2605,15 @@ class UnixAutoEdit:
                 done, _ = concurrent.futures.wait(futures, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED)
 
                 for future in done:
-                    path, tpl_name = futures.pop(future)
+                    path, tpl_name, used_gpu = futures.pop(future)
                     completed += 1
                     active_count[0] = len([f for f in futures if not f.done()])
+
+                    # Update running task counters
+                    if used_gpu:
+                        gpu_tasks_running[0] = max(0, gpu_tasks_running[0] - 1)
+                    else:
+                        cpu_tasks_running[0] = max(0, cpu_tasks_running[0] - 1)
 
                     ok, status, output_path, elapsed = future.result()
                     if ok and status == "success":
