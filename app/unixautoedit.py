@@ -84,6 +84,13 @@ try:
 except ImportError:
     WHISPER_STANDARD_AVAILABLE = False
 
+# Resource monitoring
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+
 # ===== HIDE CMD WINDOW ON WINDOWS =====
 SUBPROCESS_FLAGS = {}
 if sys.platform == 'win32':
@@ -278,6 +285,94 @@ DEFAULT_TEMPLATE = {
 }
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+
+# ===== RESOURCE MONITORING =====
+class ResourceMonitor:
+    """Monitor CPU and GPU usage for auto-scaling"""
+
+    def __init__(self, target_usage=85):
+        self.target_usage = target_usage
+        self.cpu_count = os.cpu_count() or 4
+        self._gpu_available = None
+        self._check_gpu()
+
+    def _check_gpu(self):
+        """Check if NVIDIA GPU is available"""
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=5, **SUBPROCESS_FLAGS
+            )
+            self._gpu_available = result.returncode == 0
+        except:
+            self._gpu_available = False
+
+    def get_cpu_usage(self):
+        """Get current CPU usage percentage"""
+        if PSUTIL_AVAILABLE:
+            return psutil.cpu_percent(interval=0.1)
+        return 50
+
+    def get_gpu_usage(self):
+        """Get current GPU usage percentage"""
+        if not self._gpu_available:
+            return 0
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=2, **SUBPROCESS_FLAGS
+            )
+            if result.returncode == 0:
+                return int(result.stdout.strip().split('\n')[0])
+        except:
+            pass
+        return 0
+
+    def get_memory_usage(self):
+        """Get current memory usage percentage"""
+        if PSUTIL_AVAILABLE:
+            return psutil.virtual_memory().percent
+        return 50
+
+    def get_optimal_workers(self, use_gpu=True):
+        """Calculate optimal number of workers based on current resource usage"""
+        cpu_usage = self.get_cpu_usage()
+        mem_usage = self.get_memory_usage()
+        gpu_usage = self.get_gpu_usage() if use_gpu else 0
+
+        cpu_headroom = max(0, self.target_usage - cpu_usage)
+        mem_headroom = max(0, self.target_usage - mem_usage)
+        gpu_headroom = max(0, self.target_usage - gpu_usage) if use_gpu else 100
+
+        cpu_workers = max(1, int(cpu_headroom / 25))
+        mem_workers = max(1, int(mem_headroom / 20))
+        gpu_workers = max(1, int(gpu_headroom / 30)) if use_gpu else self.cpu_count
+
+        optimal = min(cpu_workers, mem_workers, gpu_workers, self.cpu_count)
+        return max(1, min(optimal, 8))
+
+    def can_add_worker(self, use_gpu=True):
+        """Check if we can safely add another worker"""
+        cpu_usage = self.get_cpu_usage()
+        mem_usage = self.get_memory_usage()
+        gpu_usage = self.get_gpu_usage() if use_gpu else 0
+
+        return (cpu_usage < self.target_usage and
+                mem_usage < self.target_usage and
+                (not use_gpu or gpu_usage < self.target_usage))
+
+    def get_status(self, use_gpu=True):
+        """Get current resource status string"""
+        cpu = self.get_cpu_usage()
+        mem = self.get_memory_usage()
+        status = f"CPU: {cpu:.0f}% | RAM: {mem:.0f}%"
+        if use_gpu and self._gpu_available:
+            gpu = self.get_gpu_usage()
+            status += f" | GPU: {gpu:.0f}%"
+        return status
+
+# Global resource monitor
+resource_monitor = ResourceMonitor()
 
 # ===== UTILITIES =====
 def get_audio_duration(path):
@@ -1163,11 +1258,35 @@ class UnixAutoEdit:
         return {"input_folder": "", "output_folder": "", "max_workers": 2, "skip_existing": True, "use_gpu": True}
     
     def save_config(self):
-        config = {"input_folder": self.input_var.get(), "output_folder": self.output_var.get(),
-                  "max_workers": self.workers_var.get(), "skip_existing": self.skip_var.get(), "use_gpu": self.gpu_var.get()}
+        config = {
+            "input_folder": self.input_var.get(), "output_folder": self.output_var.get(),
+            "max_workers": self.workers_var.get(), "skip_existing": self.skip_var.get(),
+            "use_gpu": self.gpu_var.get(), "auto_workers": self.auto_workers_var.get(),
+            "resource_limit": self.resource_limit_var.get()
+        }
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
-    
+
+    def _toggle_auto_workers(self):
+        """Toggle auto workers mode"""
+        if self.auto_workers_var.get():
+            self.workers_spinbox.configure(state=tk.DISABLED)
+            optimal = resource_monitor.get_optimal_workers(self.gpu_var.get())
+            self.workers_var.set(optimal)
+        else:
+            self.workers_spinbox.configure(state=tk.NORMAL)
+
+    def _update_resource_status(self):
+        """Update resource usage display"""
+        try:
+            status = resource_monitor.get_status(self.gpu_var.get())
+            optimal = resource_monitor.get_optimal_workers(self.gpu_var.get())
+            self.resource_label.configure(text=f"📊 {status} | Đề xuất: {optimal} workers")
+        except:
+            self.resource_label.configure(text="📊 Không thể đọc tài nguyên")
+        if hasattr(self, 'root') and self.root.winfo_exists():
+            self.root.after(3000, self._update_resource_status)
+
     def setup_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
@@ -1294,14 +1413,32 @@ class UnixAutoEdit:
         
         self.skip_var = tk.BooleanVar(value=self.config.get("skip_existing", True))
         ttk.Checkbutton(opt_card, text="Bỏ qua file đã có", variable=self.skip_var).pack(anchor=tk.W, pady=5)
-        
+
+        # Workers with Auto mode
         workers_row = tk.Frame(opt_card, bg=COLORS["bg_card"])
         workers_row.pack(fill=tk.X, pady=5)
-        
+
         self.create_label(workers_row, "Xử lý song song:", pack=False).pack(side=tk.LEFT)
         self.workers_var = tk.IntVar(value=self.config.get("max_workers", 2))
-        ttk.Spinbox(workers_row, from_=1, to=4, textvariable=self.workers_var, width=5).pack(side=tk.LEFT, padx=10)
-        
+        self.auto_workers_var = tk.BooleanVar(value=self.config.get("auto_workers", True))
+        ttk.Checkbutton(workers_row, text="Auto", variable=self.auto_workers_var,
+                       command=self._toggle_auto_workers).pack(side=tk.LEFT, padx=5)
+        self.workers_spinbox = ttk.Spinbox(workers_row, from_=1, to=8, textvariable=self.workers_var, width=5)
+        self.workers_spinbox.pack(side=tk.LEFT, padx=5)
+
+        # Resource limit
+        self.create_label(workers_row, "Giới hạn:", pack=False).pack(side=tk.LEFT, padx=(10, 0))
+        self.resource_limit_var = tk.IntVar(value=self.config.get("resource_limit", 85))
+        ttk.Spinbox(workers_row, from_=50, to=95, textvariable=self.resource_limit_var, width=4).pack(side=tk.LEFT, padx=2)
+        tk.Label(workers_row, text="%", bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side=tk.LEFT)
+
+        # Resource status label
+        self.resource_label = tk.Label(opt_card, text="", bg=COLORS["bg_card"],
+                                       fg=COLORS["text_secondary"], font=("Segoe UI", 9))
+        self.resource_label.pack(anchor=tk.W)
+        self._update_resource_status()
+        self._toggle_auto_workers()
+
         btn_frame = tk.Frame(left, bg=COLORS["bg_main"])
         btn_frame.pack(fill=tk.X, pady=15)
 
@@ -2338,78 +2475,125 @@ class UnixAutoEdit:
         completed = 0
         success, failed = 0, 0
         output_folder = self.output_var.get()
-        workers = self.workers_var.get()
         use_gpu = self.gpu_var.get()
+        auto_mode = self.auto_workers_var.get()
+        resource_limit = self.resource_limit_var.get()
         start_time = time.time()
-        current_video_progress = [0]  # Use list to allow modification in nested function
+        active_count = [0]
+
+        resource_monitor.target_usage = resource_limit
+
+        if auto_mode:
+            workers = resource_monitor.get_optimal_workers(use_gpu)
+            self.log(f"🔄 Auto-scaling: Bắt đầu với {workers} workers (giới hạn {resource_limit}%)")
+        else:
+            workers = self.workers_var.get()
 
         self.log(f"{'='*50}")
-        self.log(f"▶ BẮT ĐẦU XỬ LÝ: {total} video | Workers: {workers}")
+        self.log(f"▶ BẮT ĐẦU XỬ LÝ: {total} video | Workers: {workers} | Auto: {'Bật' if auto_mode else 'Tắt'}")
+        self.log(f"📊 {resource_monitor.get_status(use_gpu)}")
         self.log(f"{'='*50}")
-        # Show initial progress immediately
         self.root.after(0, lambda: self.update_progress(0, f"Đang xử lý: 0/{total} video...", -1))
 
         def log_fn(msg):
             self.root.after(0, lambda m=msg: self.log(m))
 
         def progress_fn(step_percent):
-            """Update progress for current video step"""
-            current_video_progress[0] = step_percent
-            # Calculate overall: completed videos + current video progress
             overall = (completed + step_percent / 100) / total * 100
             elapsed_total = time.time() - start_time
             status_text = f"Video {completed + 1}/{total} ({step_percent}%) | ⏱ {format_time(elapsed_total)}"
+            if auto_mode and active_count[0] > 0:
+                status_text += f" | 🔄 {active_count[0]} workers"
             self.root.after(0, lambda p=overall, t=status_text: self.update_progress(p, t, -1))
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        max_workers = 8 if auto_mode else workers
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
-            for path, template_name in folders_with_templates:
-                if self.stop_flag:
-                    break
+            pending_tasks = list(folders_with_templates)
+            submitted = 0
+
+            def submit_task():
+                nonlocal submitted
+                if not pending_tasks or self.stop_flag:
+                    return False
+                current_active = len([f for f in futures if not f.done()])
+                if auto_mode:
+                    if current_active >= workers and not resource_monitor.can_add_worker(use_gpu):
+                        return False
+                    new_optimal = resource_monitor.get_optimal_workers(use_gpu)
+                    if new_optimal > workers and current_active < new_optimal:
+                        pass
+                    elif current_active >= workers:
+                        return False
+                else:
+                    if current_active >= workers:
+                        return False
+
+                path, template_name = pending_tasks.pop(0)
                 template_data = deepcopy(self.template_manager.get(template_name))
                 template_data["use_gpu"] = use_gpu
                 self.log(f"📋 {os.path.basename(path)} → Template: {template_name}")
                 future = executor.submit(process_folder, path, output_folder, template_data, log_fn, progress_fn)
                 futures[future] = (path, template_name)
-            for future in concurrent.futures.as_completed(futures):
-                if self.stop_flag:
+                submitted += 1
+                active_count[0] = len([f for f in futures if not f.done()])
+                return True
+
+            for _ in range(workers):
+                if not submit_task():
                     break
-                path, tpl_name = futures[future]
-                completed += 1
-                ok, status, output_path, elapsed = future.result()
-                if ok and status == "success":
-                    success += 1
-                    self.process_times.append(elapsed)
-                    # Store output path for "Open file" feature
-                    if output_path:
-                        folder_name = os.path.basename(path)
-                        self.completed_outputs[folder_name] = output_path
-                elif status != "skipped":
-                    failed += 1
-                percent = completed / total * 100
-                eta = -1
-                if self.process_times:
-                    avg_time = sum(self.process_times) / len(self.process_times)
-                    remaining = total - completed
-                    eta = avg_time * remaining / max(1, workers)
-                elapsed_total = time.time() - start_time
-                status_text = f"Xử lý: {completed}/{total} | ✓ {success} | ✗ {failed} | ⏱ {format_time(elapsed_total)}"
-                self.root.after(0, lambda p=percent, t=status_text, e=eta: self.update_progress(p, t, e))
-                def update_tree_item(folder_path, is_ok):
-                    for item in self.tree.get_children():
-                        values = list(self.tree.item(item, 'values'))
-                        if values[0] == os.path.basename(folder_path):
-                            if is_ok:
-                                values[2] = "✓ Xong"
-                                values[3] = "📂"  # Show open button
-                                self.tree.item(item, values=values, tags=("done",))
-                            else:
-                                values[2] = "✗ Lỗi"
-                                values[3] = ""  # No open button for failed
-                                self.tree.item(item, values=values, tags=("error",))
-                            break
-                    self.update_stats()
-                self.root.after(0, lambda p=path, o=ok: update_tree_item(p, o and status == "success"))
+
+            while futures and not self.stop_flag:
+                done, _ = concurrent.futures.wait(futures, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED)
+
+                for future in done:
+                    path, tpl_name = futures.pop(future)
+                    completed += 1
+                    active_count[0] = len([f for f in futures if not f.done()])
+
+                    ok, status, output_path, elapsed = future.result()
+                    if ok and status == "success":
+                        success += 1
+                        self.process_times.append(elapsed)
+                        if output_path:
+                            folder_name = os.path.basename(path)
+                            self.completed_outputs[folder_name] = output_path
+                    elif status != "skipped":
+                        failed += 1
+
+                    percent = completed / total * 100
+                    eta = -1
+                    if self.process_times:
+                        avg_time = sum(self.process_times) / len(self.process_times)
+                        remaining = total - completed
+                        current_workers = max(1, active_count[0]) if active_count[0] > 0 else workers
+                        eta = avg_time * remaining / current_workers
+
+                    elapsed_total = time.time() - start_time
+                    status_text = f"Xử lý: {completed}/{total} | ✓ {success} | ✗ {failed} | ⏱ {format_time(elapsed_total)}"
+                    if auto_mode:
+                        status_text += f" | 🔄 {active_count[0]}"
+                    self.root.after(0, lambda p=percent, t=status_text, e=eta: self.update_progress(p, t, e))
+
+                    def update_tree_item(folder_path, is_ok):
+                        for item in self.tree.get_children():
+                            values = list(self.tree.item(item, 'values'))
+                            if values[0] == os.path.basename(folder_path):
+                                if is_ok:
+                                    values[2] = "✓ Xong"
+                                    values[3] = "📂"
+                                    self.tree.item(item, values=values, tags=("done",))
+                                else:
+                                    values[2] = "✗ Lỗi"
+                                    values[3] = ""
+                                    self.tree.item(item, values=values, tags=("error",))
+                                break
+                        self.update_stats()
+                    self.root.after(0, lambda p=path, o=ok, s=status: update_tree_item(p, o and s == "success"))
+
+                while submit_task():
+                    pass
         elapsed_total = time.time() - start_time
         end_time_str = datetime.now().strftime("%H:%M:%S")
         start_time_str = (datetime.now() - timedelta(seconds=elapsed_total)).strftime("%H:%M:%S")
