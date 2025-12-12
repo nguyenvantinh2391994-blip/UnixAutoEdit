@@ -1315,11 +1315,6 @@ class UnixAutoEdit:
                                  activebackground="#dc2626", command=self.stop_process, state=tk.DISABLED)
         self.stop_btn.pack(fill=tk.X, ipady=8, pady=(10, 0))
 
-        self.open_btn = tk.Button(btn_frame, text="📂  MỞ FILE HOÀN THÀNH", font=("Segoe UI", 10),
-                                 bg=COLORS["bg_card"], fg=COLORS["text_primary"], relief=tk.FLAT, cursor="hand2",
-                                 activebackground=COLORS["bg_secondary"], command=self.open_completed_file)
-        self.open_btn.pack(fill=tk.X, ipady=6, pady=(10, 0))
-
         # ===== RIGHT PANEL - FILE LIST =====
         right = tk.Frame(parent, bg=COLORS["bg_main"])
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, pady=15)
@@ -2410,48 +2405,6 @@ class UnixAutoEdit:
     def stop_process(self):
         self.stop_flag = True
         self.log("⏹ Đang dừng xử lý...")
-
-    def open_completed_file(self):
-        """Open the completed output file for selected item"""
-        selection = self.tree.selection()
-        if not selection:
-            messagebox.showinfo("Thông báo", "Vui lòng chọn file đã hoàn thành trong danh sách")
-            return
-
-        item = selection[0]
-        values = self.tree.item(item, 'values')
-        folder_name = values[0]
-
-        if folder_name in self.completed_outputs:
-            output_path = self.completed_outputs[folder_name]
-            if os.path.exists(output_path):
-                # Open file with default application
-                import subprocess
-                if sys.platform == 'win32':
-                    os.startfile(output_path)
-                elif sys.platform == 'darwin':
-                    subprocess.run(['open', output_path])
-                else:
-                    subprocess.run(['xdg-open', output_path])
-                self.log(f"📂 Mở file: {output_path}")
-            else:
-                messagebox.showwarning("Cảnh báo", f"File không tồn tại:\n{output_path}")
-        else:
-            # Check if output exists in output folder
-            output_folder = self.output_var.get()
-            output_path = os.path.join(output_folder, f"{folder_name}.mp4")
-            if os.path.exists(output_path):
-                if sys.platform == 'win32':
-                    os.startfile(output_path)
-                elif sys.platform == 'darwin':
-                    import subprocess
-                    subprocess.run(['open', output_path])
-                else:
-                    import subprocess
-                    subprocess.run(['xdg-open', output_path])
-                self.log(f"📂 Mở file: {output_path}")
-            else:
-                messagebox.showinfo("Thông báo", "File chưa hoàn thành hoặc chưa được xử lý")
 
 
 # ===== MAIN =====
