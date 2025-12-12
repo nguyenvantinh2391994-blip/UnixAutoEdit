@@ -267,6 +267,18 @@ def download_update():
             log(f"Launcher update skipped: {e}")
             # Không fail nếu không update được launcher
 
+        # 3. Download icon.ico
+        try:
+            icon_url = f"{GITHUB_RAW_BASE}/icon.ico"
+            icon_path = os.path.join(BASE_DIR, "icon.ico")
+            icon_content = fetch_url(icon_url, timeout=15)
+            if len(icon_content) > 100:
+                with open(icon_path, "wb") as f:
+                    f.write(icon_content)
+                log(f"Icon updated: {len(icon_content)} bytes")
+        except Exception as e:
+            log(f"Icon update skipped: {e}")
+
         return True
 
     except Exception as e:
