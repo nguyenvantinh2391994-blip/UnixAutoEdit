@@ -2052,19 +2052,20 @@ class UnixAutoEdit:
         
         try:
             font_file = self.font_file_var.get()
-            preview_font_size = int(font_size * target_w / 1920)
+            # Use font_size directly - same as actual video rendering
             if font_file and os.path.exists(font_file):
-                font = ImageFont.truetype(font_file, preview_font_size)
+                font = ImageFont.truetype(font_file, font_size)
             else:
-                font = ImageFont.truetype("arial.ttf", preview_font_size)
+                font = ImageFont.truetype("arial.ttf", font_size)
         except:
             font = ImageFont.load_default()
-        
+
         sample_text = "Sample Subtitle - Hello World!"
         bbox = draw.textbbox((0, 0), sample_text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         text_x = (target_w - text_w) // 2
+        # Match ASS subtitle positioning (margin from bottom edge)
         text_y = target_h - margin_bottom - text_h
         
         outline_color = self.outlinecolor_var.get()
