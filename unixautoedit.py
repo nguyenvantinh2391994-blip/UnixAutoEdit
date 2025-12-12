@@ -154,6 +154,18 @@ if PORTABLE_MODE:
     if os.path.isdir(FFMPEG_DIR):
         os.environ["PATH"] = FFMPEG_DIR + os.pathsep + os.environ.get("PATH", "")
 
+# ===== VERSION =====
+def get_app_version():
+    """Read version from version.txt"""
+    version_file = os.path.join(BASE_DIR, "version.txt")
+    try:
+        with open(version_file, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except:
+        return "2.0"
+
+APP_VERSION = get_app_version()
+
 # ===== VIETNAMESE FONT SUPPORT =====
 VIETNAMESE_FONTS = [
     "Arial", "Tahoma", "Segoe UI", "Times New Roman", "Verdana",
@@ -1093,7 +1105,7 @@ def process_folder(folder_path, output_folder, template, log_fn=None):
 class UnixAutoEdit:
     def __init__(self, root):
         self.root = root
-        self.root.title("Uni-x Auto Edit v2.2")
+        self.root.title(f"Uni-x Auto Edit v{APP_VERSION}")
         self.root.geometry("1400x900")
         self.root.minsize(1300, 800)
         self.root.configure(bg=COLORS["bg_main"])
@@ -1191,7 +1203,7 @@ class UnixAutoEdit:
                 bg=COLORS["bg_secondary"], fg=COLORS["accent"]).pack(side=tk.LEFT)
         tk.Label(title_frame, text=" AUTO EDIT", font=("Segoe UI", 24),
                 bg=COLORS["bg_secondary"], fg=COLORS["text_primary"]).pack(side=tk.LEFT)
-        tk.Label(title_frame, text=" v2.2", font=("Segoe UI", 12),
+        tk.Label(title_frame, text=f" v{APP_VERSION}", font=("Segoe UI", 12),
                 bg=COLORS["bg_secondary"], fg=COLORS["text_dim"]).pack(side=tk.LEFT, padx=5)
         
         gpu_frame = tk.Frame(header, bg=COLORS["bg_secondary"])
@@ -1741,13 +1753,15 @@ class UnixAutoEdit:
                     path = os.path.join(FONTS_DIR, f)
                     if get_font_name_from_file(path) == font_name:
                         self.font_file_var.set(path)
+                        self.update_preview()
                         return
         sys_path = find_system_font(font_name)
         if sys_path:
             self.font_file_var.set(sys_path)
         else:
             self.font_file_var.set("")
-    
+        self.update_preview()
+
     def create_overlays(self):
         self.log("Đang tạo video overlay...")
         created = 0
@@ -2039,7 +2053,7 @@ class UnixAutoEdit:
         except:
             font = ImageFont.load_default()
         
-        sample_text = "Phụ đề tiếng Việt - Xin chào!"
+        sample_text = "Sample Subtitle - Hello World!"
         bbox = draw.textbbox((0, 0), sample_text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
