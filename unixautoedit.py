@@ -23,8 +23,40 @@ from datetime import datetime, timedelta
 from copy import deepcopy
 
 # GUI
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
+TKINTER_AVAILABLE = False
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox, colorchooser, simpledialog
+    TKINTER_AVAILABLE = True
+except ImportError as e:
+    print("=" * 60)
+    print("CRITICAL ERROR: tkinter is not available!")
+    print("=" * 60)
+    print(f"Error: {e}")
+    print()
+    print("This application requires tkinter to run.")
+    print()
+    print("Solutions:")
+    print("1. If using portable version: Run build_portable.py again")
+    print("2. If using installed Python: Reinstall Python with tkinter")
+    print("   On Windows: Check 'tcl/tk and IDLE' during installation")
+    print("   On Linux: sudo apt-get install python3-tk")
+    print("   On Mac: brew install python-tk")
+    print()
+    print("Required tkinter files (for portable):")
+    print("  - python/DLLs/_tkinter.pyd")
+    print("  - python/tcl86t.dll, python/tk86t.dll")
+    print("  - python/tcl/ folder")
+    print("  - python/Lib/tkinter/ folder")
+    print("=" * 60)
+    print()
+    print("Press Enter to exit...")
+    try:
+        input()
+    except:
+        pass
+    import sys
+    sys.exit(1)
 
 # PIL
 try:
@@ -1238,93 +1270,101 @@ class UnixAutoEdit:
         
         btn_frame = tk.Frame(left, bg=COLORS["bg_main"])
         btn_frame.pack(fill=tk.X, pady=15)
-        
+
         self.start_btn = tk.Button(btn_frame, text="▶  BẮT ĐẦU XỬ LÝ", font=("Segoe UI", 13, "bold"),
                                   bg=COLORS["success"], fg="#FFFFFF", relief=tk.FLAT, cursor="hand2",
                                   activebackground="#16a34a", command=self.start_process)
         self.start_btn.pack(fill=tk.X, ipady=12)
-        
+
         self.stop_btn = tk.Button(btn_frame, text="⏹  DỪNG LẠI", font=("Segoe UI", 11, "bold"),
                                  bg=COLORS["error"], fg="#FFFFFF", relief=tk.FLAT, cursor="hand2",
                                  activebackground="#dc2626", command=self.stop_process, state=tk.DISABLED)
         self.stop_btn.pack(fill=tk.X, ipady=8, pady=(10, 0))
-        
-        quick_frame = tk.Frame(left, bg=COLORS["bg_main"])
-        quick_frame.pack(fill=tk.X)
-        
-        self.create_button(quick_frame, "🔄 Làm mới", self.refresh_list).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 5))
-        self.create_button(quick_frame, "✓ Chọn tất cả", self.select_all).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(5, 5))
-        self.create_button(quick_frame, "✗ Bỏ chọn", self.deselect_all).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(5, 0))
-        
+
+        # ===== RIGHT PANEL - FILE LIST =====
         right = tk.Frame(parent, bg=COLORS["bg_main"])
         right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, pady=15)
-        
+
+        # Header with title and stats
         list_header = tk.Frame(right, bg=COLORS["bg_main"])
-        list_header.pack(fill=tk.X, pady=(0, 10))
-        
+        list_header.pack(fill=tk.X, pady=(0, 8))
+
         tk.Label(list_header, text="📋 DANH SÁCH FILE", font=("Segoe UI", 12, "bold"),
                 bg=COLORS["bg_main"], fg=COLORS["accent_light"]).pack(side=tk.LEFT)
-        
+
         self.stats_label = tk.Label(list_header, text="Tổng: 0 | Chọn: 0 | Xong: 0",
                                    bg=COLORS["bg_main"], fg=COLORS["text_dim"], font=("Segoe UI", 10))
         self.stats_label.pack(side=tk.RIGHT)
-        
+
+        # Control panel - MOVED TO TOP (above file list)
+        control_panel = tk.Frame(right, bg=COLORS["bg_card"], padx=12, pady=10)
+        control_panel.pack(fill=tk.X, pady=(0, 10))
+
+        btn_style = {"bg": COLORS["bg_hover"], "fg": COLORS["text_primary"], "relief": tk.FLAT,
+                    "font": ("Segoe UI", 9), "cursor": "hand2", "padx": 10, "pady": 4}
+
+        # Row 1: Selection buttons
+        row1 = tk.Frame(control_panel, bg=COLORS["bg_card"])
+        row1.pack(fill=tk.X, pady=(0, 6))
+
+        tk.Button(row1, text="✓ Chọn tất cả", command=self.select_all, **btn_style).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(row1, text="✗ Bỏ chọn", command=self.deselect_all, **btn_style).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(row1, text="☑ Bật xử lý", command=self.enable_selected, **btn_style).pack(side=tk.LEFT, padx=(0, 5))
+        tk.Button(row1, text="☐ Tắt xử lý", command=self.disable_selected, **btn_style).pack(side=tk.LEFT)
+
+        # Selection info on right
+        self.selection_label = tk.Label(row1, text="",
+                                        bg=COLORS["bg_card"], fg=COLORS["text_secondary"], font=("Segoe UI", 9))
+        self.selection_label.pack(side=tk.RIGHT)
+
+        # Row 2: Template selection for selected items
+        row2 = tk.Frame(control_panel, bg=COLORS["bg_card"])
+        row2.pack(fill=tk.X)
+
+        tk.Label(row2, text="Áp dụng template cho mục đã chọn:", bg=COLORS["bg_card"],
+                fg=COLORS["text_secondary"], font=("Segoe UI", 9)).pack(side=tk.LEFT)
+
+        self.quick_template_var = tk.StringVar(value="Mặc định")
+        self.quick_template_combo = ttk.Combobox(row2, textvariable=self.quick_template_var,
+                                                 values=self.template_manager.get_list(), width=15, state="readonly")
+        self.quick_template_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self.quick_template_combo.bind("<<ComboboxSelected>>", self.apply_template_to_selected)
+
+        # File list (Treeview)
         tree_frame = tk.Frame(right, bg=COLORS["bg_secondary"])
         tree_frame.pack(fill=tk.BOTH, expand=True)
-        
+
         cols = ("name", "template", "status", "audio", "video", "img")
         self.tree = ttk.Treeview(tree_frame, columns=cols, show="headings", height=12, selectmode="extended")
-        
+
         self.tree.heading("name", text="Tên thư mục")
         self.tree.heading("template", text="Template")
         self.tree.heading("status", text="Trạng thái")
         self.tree.heading("audio", text="🎵")
         self.tree.heading("video", text="🎬")
         self.tree.heading("img", text="🖼")
-        
+
         self.tree.column("name", width=200)
         self.tree.column("template", width=120)
         self.tree.column("status", width=100)
         self.tree.column("audio", width=50, anchor=tk.CENTER)
         self.tree.column("video", width=50, anchor=tk.CENTER)
         self.tree.column("img", width=50, anchor=tk.CENTER)
-        
+
         scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
-        
+
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        control_panel = tk.Frame(right, bg=COLORS["bg_card"], padx=15, pady=12)
-        control_panel.pack(fill=tk.X, pady=(10, 0))
-        
-        row1 = tk.Frame(control_panel, bg=COLORS["bg_card"])
-        row1.pack(fill=tk.X, pady=(0, 8))
-        
-        self.selection_label = tk.Label(row1, text="Chọn items trong danh sách để thao tác",
-                                        bg=COLORS["bg_card"], fg=COLORS["text_secondary"], font=("Segoe UI", 10))
-        self.selection_label.pack(side=tk.LEFT)
-        
-        tk.Label(row1, text="Template:", bg=COLORS["bg_card"], fg=COLORS["text_primary"],
-                font=("Segoe UI", 10)).pack(side=tk.RIGHT, padx=(0, 5))
-        
-        self.quick_template_var = tk.StringVar(value="Mặc định")
-        self.quick_template_combo = ttk.Combobox(row1, textvariable=self.quick_template_var,
-                                                 values=self.template_manager.get_list(), width=15, state="readonly")
-        self.quick_template_combo.pack(side=tk.RIGHT, padx=(0, 10))
-        self.quick_template_combo.bind("<<ComboboxSelected>>", self.apply_template_to_selected)
-        
-        row2 = tk.Frame(control_panel, bg=COLORS["bg_card"])
-        row2.pack(fill=tk.X)
-        
-        btn_style = {"bg": COLORS["bg_hover"], "fg": COLORS["text_primary"], "relief": tk.FLAT,
-                    "font": ("Segoe UI", 9), "cursor": "hand2", "padx": 12, "pady": 5}
-        
-        tk.Button(row2, text="✓ Bật xử lý", command=self.enable_selected, **btn_style).pack(side=tk.LEFT, padx=(0, 5))
-        tk.Button(row2, text="○ Tắt xử lý", command=self.disable_selected, **btn_style).pack(side=tk.LEFT, padx=(0, 5))
-        tk.Button(row2, text="🔄 Làm mới", command=self.refresh_list, **btn_style).pack(side=tk.RIGHT)
-        
+
+        # Bind events
         self.tree.bind("<<TreeviewSelect>>", self.on_tree_select)
+        self.tree.bind("<Double-1>", self.on_tree_double_click)  # Double-click to change template
+
+        # Start auto-refresh for file list
+        self._last_folder_mtime = 0
+        self._auto_refresh_enabled = True
+        self.root.after(2000, self._auto_refresh_list)
     
     def setup_settings_tab(self, parent):
         container = tk.Frame(parent, bg=COLORS["bg_main"])
@@ -1724,16 +1764,93 @@ class UnixAutoEdit:
         selection = self.tree.selection()
         count = len(selection)
         if count == 0:
-            self.selection_label.config(text="Chọn items trong danh sách để thao tác")
+            self.selection_label.config(text="")
         elif count == 1:
             item = self.tree.item(selection[0])
             folder_name = item['values'][0]
             tpl = item['values'][1]
-            self.selection_label.config(text=f"Đã chọn: {folder_name} (Template: {tpl})")
+            self.selection_label.config(text=f"Đã chọn: {folder_name}")
             self.quick_template_var.set(tpl)
         else:
-            self.selection_label.config(text=f"Đã chọn: {count} items")
-    
+            self.selection_label.config(text=f"Đã chọn: {count} mục")
+
+    def on_tree_double_click(self, event=None):
+        """Double-click on a row to change its template via popup menu"""
+        item = self.tree.identify_row(event.y)
+        column = self.tree.identify_column(event.x)
+
+        if not item:
+            return
+
+        # Get column index (e.g., "#2" -> 1)
+        col_idx = int(column.replace("#", "")) - 1
+
+        # If double-click on template column (index 1), show template selector
+        if col_idx == 1:
+            self._show_template_popup(item, event)
+
+    def _show_template_popup(self, item, event):
+        """Show a popup menu to select template for a specific item"""
+        popup = tk.Menu(self.root, tearoff=0, bg=COLORS["bg_card"], fg=COLORS["text_primary"])
+
+        templates = self.template_manager.get_list()
+        input_folder = self.input_var.get()
+        values = list(self.tree.item(item, 'values'))
+        folder_name = values[0]
+        folder_path = os.path.join(input_folder, folder_name)
+
+        def set_template(tpl_name):
+            if folder_path in self.folder_data:
+                self.folder_data[folder_path]["template"] = tpl_name
+                values[1] = tpl_name
+                self.tree.item(item, values=values)
+                self.log(f"📋 Template '{tpl_name}' cho '{folder_name}'")
+
+        for tpl in templates:
+            popup.add_command(label=tpl, command=lambda t=tpl: set_template(t))
+
+        try:
+            popup.tk_popup(event.x_root, event.y_root)
+        finally:
+            popup.grab_release()
+
+    def _auto_refresh_list(self):
+        """Auto-refresh file list when input folder changes"""
+        if not self._auto_refresh_enabled:
+            return
+
+        try:
+            input_folder = self.input_var.get()
+            if input_folder and os.path.isdir(input_folder):
+                # Check if folder was modified
+                current_mtime = os.path.getmtime(input_folder)
+
+                # Also check subfolder count
+                try:
+                    current_items = set(os.listdir(input_folder))
+                except:
+                    current_items = set()
+
+                # Store previous state
+                if not hasattr(self, '_last_folder_items'):
+                    self._last_folder_items = set()
+
+                # Refresh if mtime changed or items changed
+                if (current_mtime != self._last_folder_mtime or
+                    current_items != self._last_folder_items):
+
+                    self._last_folder_mtime = current_mtime
+                    self._last_folder_items = current_items
+
+                    # Only refresh if not processing
+                    if not self.processing:
+                        self.refresh_list()
+        except Exception as e:
+            pass  # Silently ignore errors
+
+        # Schedule next check (every 3 seconds)
+        self.root.after(3000, self._auto_refresh_list)
+
     def apply_template_to_selected(self, event=None):
         selection = self.tree.selection()
         if not selection:

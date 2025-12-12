@@ -7,18 +7,77 @@ Uni-x Auto Edit Launcher
 - Launches main application
 
 Author: UnixAutoEdit Team
-Version: 2.3.0
+Version: 2.3.1
 """
 
 import os
 import sys
 import urllib.request
 import urllib.error
-import tkinter as tk
-from tkinter import messagebox
 import threading
 import time
 import traceback
+
+# Try to import tkinter with helpful error message
+TKINTER_AVAILABLE = False
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+    TKINTER_AVAILABLE = True
+except ImportError as e:
+    print("=" * 60)
+    print("ERROR: tkinter is not available!")
+    print("=" * 60)
+    print(f"Import error: {e}")
+    print()
+    print("Possible solutions:")
+    print("1. Run build_portable.py again to setup tkinter")
+    print("2. Make sure Python was installed with tkinter support")
+    print("3. On Windows, tkinter files may be missing from python/")
+    print()
+    print("Required files for tkinter:")
+    print("  - python/DLLs/_tkinter.pyd")
+    print("  - python/tcl86t.dll, tk86t.dll")
+    print("  - python/tcl/ folder")
+    print("  - python/Lib/tkinter/ folder")
+    print("=" * 60)
+
+    # Create dummy tk module for fallback
+    class DummyTk:
+        BOTH = "both"
+        X = "x"
+        Y = "y"
+        LEFT = "left"
+        RIGHT = "right"
+        W = "w"
+        FLAT = "flat"
+
+        class Tk:
+            def __init__(self):
+                raise RuntimeError("tkinter not available")
+
+        class Frame:
+            pass
+
+        class Label:
+            pass
+
+        class Button:
+            pass
+
+    class DummyMessagebox:
+        @staticmethod
+        def showerror(title, message):
+            print(f"ERROR: {title}")
+            print(message)
+
+        @staticmethod
+        def showinfo(title, message):
+            print(f"INFO: {title}")
+            print(message)
+
+    tk = DummyTk()
+    messagebox = DummyMessagebox()
 
 # ===== CONFIGURATION =====
 GITHUB_RAW_BASE = "https://raw.githubusercontent.com/nguyenvantinh2391994-blip/UnixAutoEdit/main"
@@ -452,22 +511,32 @@ def check_and_update():
     if compare_versions(local_ver, remote_ver):
         log(f"Update available: {local_ver} -> {remote_ver}")
 
-        # Show update dialog
-        dialog = UpdateDialog(local_ver, remote_ver)
-        should_update = dialog.show()
-
-        if should_update:
-            progress = ProgressDialog()
-            success = progress.run_update(remote_ver)
-
-            if success:
-                log("Update completed successfully")
-            else:
-                log("Update failed")
-
+        # Check if tkinter is available for GUI dialogs
+        if not TKINTER_AVAILABLE:
+            log("tkinter not available - skipping update dialog")
+            log("To update manually, download the latest version from GitHub")
             return True
-        else:
-            log("User skipped update")
+
+        try:
+            # Show update dialog
+            dialog = UpdateDialog(local_ver, remote_ver)
+            should_update = dialog.show()
+
+            if should_update:
+                progress = ProgressDialog()
+                success = progress.run_update(remote_ver)
+
+                if success:
+                    log("Update completed successfully")
+                else:
+                    log("Update failed")
+
+                return True
+            else:
+                log("User skipped update")
+        except Exception as e:
+            log(f"Update dialog error: {e}")
+            log("Continuing without update...")
     else:
         log(f"Already at latest version: {local_ver}")
 
