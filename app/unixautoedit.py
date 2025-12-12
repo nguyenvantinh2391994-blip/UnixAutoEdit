@@ -597,7 +597,7 @@ def generate_srt(audio_path, output_dir, template):
     
     audio_file = wav_path if os.path.exists(wav_path) else audio_path
     model, whisper_type = get_whisper_model(template.get("whisper_model", "tiny"))
-    lang = template.get("whisper_language", "vi")
+    lang = template.get("whisper_language", "en")
     
     result = None
     if whisper_type == "faster":
@@ -1479,19 +1479,22 @@ class UnixAutoEdit:
         
         self.create_label(outline_row, "Độ dày viền:", width=10, pack=False).pack(side=tk.LEFT)
         self.outline_var = tk.IntVar(value=3)
+        self.outline_var.trace_add("write", self.update_preview)
         self.create_entry(outline_row, self.outline_var, width=6).pack(side=tk.LEFT, padx=5)
-        
+
         margin_row = tk.Frame(sub_card, bg=COLORS["bg_card"])
         margin_row.pack(fill=tk.X, pady=3)
-        
+
         self.create_label(margin_row, "Cách đáy:", width=10, pack=False).pack(side=tk.LEFT)
         self.margin_var = tk.IntVar(value=50)
+        self.margin_var.trace_add("write", self.update_preview)
         self.create_entry(margin_row, self.margin_var, width=6).pack(side=tk.LEFT, padx=5)
         
         # Logo
         logo_card = self.create_card(scroll_frame, "🏷 LOGO", 140, width=470)
         
         self.logo_enabled_var = tk.BooleanVar(value=False)
+        self.logo_enabled_var.trace_add("write", self.update_preview)
         ttk.Checkbutton(logo_card, text="Thêm logo vào video", variable=self.logo_enabled_var).pack(anchor=tk.W, pady=3)
         
         logo_file_row = tk.Frame(logo_card, bg=COLORS["bg_card"])
@@ -1499,6 +1502,7 @@ class UnixAutoEdit:
         
         self.create_label(logo_file_row, "File:", width=8, pack=False).pack(side=tk.LEFT)
         self.logo_var = tk.StringVar()
+        self.logo_var.trace_add("write", self.update_preview)
         self.logo_combo = ttk.Combobox(logo_file_row, textvariable=self.logo_var, values=self.get_logo_list(), width=18, state="readonly")
         self.logo_combo.pack(side=tk.LEFT, padx=5)
         self.create_button(logo_file_row, "📂", self.browse_logo, width=3).pack(side=tk.LEFT, padx=5)
@@ -1508,6 +1512,7 @@ class UnixAutoEdit:
         
         self.create_label(logo_pos_row, "Vị trí:", width=8, pack=False).pack(side=tk.LEFT)
         self.logopos_var = tk.StringVar(value="top_right")
+        self.logopos_var.trace_add("write", self.update_preview)
         for pos, text in [("top_left", "⬆️ Trái"), ("top_right", "⬆️ Phải"), ("bottom_left", "⬇️ Trái"), ("bottom_right", "⬇️ Phải")]:
             ttk.Radiobutton(logo_pos_row, text=text, value=pos, variable=self.logopos_var).pack(side=tk.LEFT, padx=5)
         
@@ -1516,6 +1521,7 @@ class UnixAutoEdit:
         
         self.create_label(logo_size_row, "Kích cỡ:", width=8, pack=False).pack(side=tk.LEFT)
         self.logosize_var = tk.IntVar(value=15)
+        self.logosize_var.trace_add("write", self.update_preview)
         self.create_entry(logo_size_row, self.logosize_var, width=5).pack(side=tk.LEFT, padx=5)
         tk.Label(logo_size_row, text="%", bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side=tk.LEFT)
         
@@ -1575,7 +1581,7 @@ class UnixAutoEdit:
                     values=["tiny", "base", "small", "medium", "large"]).pack(side=tk.LEFT, padx=5)
         
         self.create_label(whisper_row, "Ngôn ngữ:", pack=False).pack(side=tk.LEFT, padx=(25, 0))
-        self.lang_var = tk.StringVar(value="vi")
+        self.lang_var = tk.StringVar(value="en")
         ttk.Combobox(whisper_row, textvariable=self.lang_var, width=6, state="readonly",
                     values=["vi", "en", "zh", "ja", "ko", "fr", ""]).pack(side=tk.LEFT, padx=5)
         
@@ -1695,6 +1701,7 @@ class UnixAutoEdit:
         if color:
             var.set(color)
             btn.configure(bg=color)
+            self.update_preview()
     
     def set_resolution(self, w, h):
         self.width_var.set(w)
@@ -2144,7 +2151,7 @@ class UnixAutoEdit:
         self.trans_var.set(tpl.get("transition_enabled", True))
         self.transdur_var.set(tpl.get("transition_duration", 0.8))
         self.whisper_var.set(tpl.get("whisper_model", "tiny"))
-        self.lang_var.set(tpl.get("whisper_language", "vi"))
+        self.lang_var.set(tpl.get("whisper_language", "en"))
         self.fontcolor_btn.configure(bg=self.fontcolor_var.get())
         self.outlinecolor_btn.configure(bg=self.outlinecolor_var.get())
     
