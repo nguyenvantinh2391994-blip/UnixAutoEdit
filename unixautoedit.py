@@ -272,6 +272,7 @@ DEFAULT_TEMPLATE = {
     "overlay_opacity": 0.5,
     "transition_enabled": True,
     "transition_duration": 0.8,
+    "transition_type": "random",
     "whisper_model": "tiny",
     "whisper_language": "en",
     "use_gpu": True,
@@ -779,10 +780,11 @@ def create_image_clip(path, output, duration, template, use_gpu=True):
     run_cmd(cmd)
     return output
 
-def apply_transition(clip1, clip2, output, trans_dur=0.8, use_gpu=True):
+def apply_transition(clip1, clip2, output, trans_dur=0.8, trans_type="random", use_gpu=True):
     dur1 = get_video_duration(clip1)
     offset = max(0, dur1 - trans_dur)
-    trans_type = random.choice(["fade", "fadeblack", "wipeleft", "wiperight", "slideleft", "slideright"])
+    if trans_type == "random":
+        trans_type = random.choice(["fade", "fadeblack", "wipeleft", "wiperight", "slideleft", "slideright"])
     
     cmd = ["ffmpeg", "-y", "-i", clip1, "-i", clip2,
            "-filter_complex", f"[0:v][1:v]xfade=transition={trans_type}:duration={trans_dur}:offset={offset}[v]",
@@ -798,10 +800,11 @@ def merge_clips(clips, output, template, use_gpu=True):
     if len(clips) == 1:
         shutil.copy2(clips[0], output)
         return output
-    
+
     trans_enabled = template.get("transition_enabled", True)
     trans_dur = template.get("transition_duration", 0.8)
-    
+    trans_type = template.get("transition_type", "random")
+
     if not trans_enabled:
         concat_file = output + ".txt"
         with open(concat_file, "w") as f:
@@ -809,17 +812,17 @@ def merge_clips(clips, output, template, use_gpu=True):
                 f.write(f"file '{c}'\n")
         run_cmd(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file, "-c", "copy", output])
         return output
-    
+
     tmp_dir = os.path.dirname(clips[0])
     merged = clips[0]
-    
+
     for i in range(1, len(clips)):
         out = os.path.join(tmp_dir, f"m_{i}.mp4")
-        apply_transition(merged, clips[i], out, trans_dur, use_gpu)
+        apply_transition(merged, clips[i], out, trans_dur, trans_type, use_gpu)
         if merged != clips[0] and os.path.exists(merged):
             os.remove(merged)
         merged = out
-    
+
     shutil.move(merged, output)
     return output
 
@@ -1586,11 +1589,18 @@ class UnixAutoEdit:
         
         trans_row = tk.Frame(effect_card, bg=COLORS["bg_card"])
         trans_row.pack(fill=tk.X, pady=3)
-        
+
         self.trans_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(trans_row, text="Chuyển cảnh", variable=self.trans_var).pack(side=tk.LEFT)
-        
-        self.create_label(trans_row, "Thời gian:", pack=False).pack(side=tk.LEFT, padx=(20, 0))
+
+        self.create_label(trans_row, "Kiểu:", pack=False).pack(side=tk.LEFT, padx=(15, 0))
+        self.transtype_var = tk.StringVar(value="random")
+        ttk.Combobox(trans_row, textvariable=self.transtype_var, width=10, state="readonly",
+                    values=["random", "fade", "fadeblack", "fadewhite", "wipeleft", "wiperight",
+                            "wipeup", "wipedown", "slideleft", "slideright", "slideup", "slidedown",
+                            "circlecrop", "rectcrop", "distance", "pixelize"]).pack(side=tk.LEFT, padx=5)
+
+        self.create_label(trans_row, "Thời gian:", pack=False).pack(side=tk.LEFT, padx=(10, 0))
         self.transdur_var = tk.DoubleVar(value=0.8)
         self.create_entry(trans_row, self.transdur_var, width=5).pack(side=tk.LEFT, padx=5)
         tk.Label(trans_row, text="giây", bg=COLORS["bg_card"], fg=COLORS["text_primary"]).pack(side=tk.LEFT)
@@ -2187,7 +2197,8 @@ class UnixAutoEdit:
             "logo_size_percent": self.logosize_var.get(), "logo_opacity": 0.85,
             "filter_effect": filter_val, "video_overlay": overlay_val,
             "overlay_opacity": self.overlay_opacity_var.get(), "transition_enabled": self.trans_var.get(),
-            "transition_duration": self.transdur_var.get(), "whisper_model": self.whisper_var.get(),
+            "transition_duration": self.transdur_var.get(), "transition_type": self.transtype_var.get(),
+            "whisper_model": self.whisper_var.get(),
             "whisper_language": self.lang_var.get(), "use_gpu": self.gpu_var.get(),
         }
     
@@ -2220,6 +2231,7 @@ class UnixAutoEdit:
         self.overlay_opacity_var.set(tpl.get("overlay_opacity", 0.5))
         self.trans_var.set(tpl.get("transition_enabled", True))
         self.transdur_var.set(tpl.get("transition_duration", 0.8))
+        self.transtype_var.set(tpl.get("transition_type", "random"))
         self.whisper_var.set(tpl.get("whisper_model", "tiny"))
         self.lang_var.set(tpl.get("whisper_language", "en"))
         self.fontcolor_btn.configure(bg=self.fontcolor_var.get())
